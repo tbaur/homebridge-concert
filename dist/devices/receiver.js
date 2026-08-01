@@ -20,10 +20,10 @@ class ReceiverAccessory {
     switchService;
     isOn = false;
     /**
-     * Monotonic generation bumped on every set and refresh start. A refresh that
-     * finishes after a later set (or a newer refresh) must not overwrite HomeKit.
+     * Bumped only by HomeKit power sets. A refresh that started before a set
+     * must not overwrite that set; a set is only discarded by a newer set.
      */
-    generation = 0;
+    setGeneration = 0;
     /** In-flight refresh promise so overlapping poll ticks share one request. */
     refreshInFlight;
     /** True after the first consecutive poll failure has been logged at warn. */
@@ -56,11 +56,13 @@ class ReceiverAccessory {
     /** Power the receiver on or put it into standby. */
     async handleSetOn(value) {
         const on = Boolean(value);
-        const setGeneration = ++this.generation;
+        const mySet = ++this.setGeneration;
         try {
             await this.client.setPower(on);
-            // Only apply if nothing newer (another set) landed while we awaited.
-            if (setGeneration === this.generation) {
+            // Only apply if a newer HomeKit set did not supersede this one. A concurrent
+            // poll must not invalidate a successful plugin-driven set (that used to make
+            // the next poll log the change as "(external)").
+            if (mySet === this.setGeneration) {
                 this.isOn = on;
                 this.platform.log.info(`${this.accessory.displayName}: ${on ? 'ON' : 'STANDBY'}`);
             }
@@ -78,6 +80,9 @@ class ReceiverAccessory {
     /**
      * Poll the receiver and push the result into HomeKit. Safe to call on a timer.
      * Concurrent callers share a single in-flight request (single-flight).
+     *
+     * `(external)` means the On/Off change was observed by polling — remote, front
+     * panel, HDMI-CEC, etc. — not a HomeKit write handled by this plugin.
      */
     async refresh() {
         if (this.refreshInFlight) {
@@ -89,11 +94,11 @@ class ReceiverAccessory {
         return this.refreshInFlight;
     }
     async runRefresh() {
-        const refreshGeneration = ++this.generation;
+        const setGenerationAtStart = this.setGeneration;
         try {
             const on = await this.client.getPowerState();
-            // Discard if a set (or a newer refresh) started while we were awaiting.
-            if (refreshGeneration !== this.generation) {
+            // Discard if a HomeKit set started (or completed) while we were awaiting.
+            if (setGenerationAtStart !== this.setGeneration) {
                 return;
             }
             if (on !== this.isOn) {
@@ -107,7 +112,7 @@ class ReceiverAccessory {
             }
         }
         catch (error) {
-            if (refreshGeneration !== this.generation) {
+            if (setGenerationAtStart !== this.setGeneration) {
                 return;
             }
             const message = error instanceof Error ? error.message : String(error);

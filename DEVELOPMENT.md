@@ -36,7 +36,7 @@ This plugin talks to a **LAN TCP** control port, so its resilience focuses on ma
 - **Short-lived connections** — each power query/set opens a TCP socket, sends one frame, reads one response, and closes. That avoids sticky half-open sockets if the receiver drops idle clients in standby.
 - **Bounded timeouts** — connect and request waits are capped so a stalled receiver cannot wedge Homebridge.
 - **Polling cadence** — default 90s, configurable, clamped to 5s–86400s (prevents Node's `setInterval` overflow-to-1ms behavior).
-- **Set/poll isolation** — a generation counter discards stale refresh completions that finish after a newer set or refresh; overlapping poll ticks share one in-flight request (single-flight).
+- **Set/poll isolation** — HomeKit sets own a `setGeneration`; a poll that started before a set is discarded so plugin-driven changes log as `ON`/`STANDBY` (not `(external)`). Overlapping poll ticks share one in-flight request (single-flight).
 - **Query retry** — a timed-out / closed power query is retried once after a short delay before the poll is marked failed.
 - **Quiet poll failures** — the first consecutive failure logs at warn; repeats demote to debug until a successful poll recovers.
 
