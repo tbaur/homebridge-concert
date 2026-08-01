@@ -150,6 +150,7 @@ describe('ConcertPlatform', () => {
       UUID: uuid,
       displayName: 'Old Name',
       context: {},
+      updateDisplayName: undefined as ((name: string) => void) | undefined,
       getService: jest.fn().mockReturnValue({
         setCharacteristic: jest.fn().mockReturnThis(),
         getCharacteristic: jest.fn().mockReturnValue({
@@ -159,14 +160,18 @@ describe('ConcertPlatform', () => {
         updateCharacteristic: jest.fn(),
       }),
       addService: jest.fn(),
-    } as unknown as PlatformAccessory
+    }
+    cached.updateDisplayName = (name: string) => {
+      cached.displayName = name
+    }
+    const cachedAccessory = cached as unknown as PlatformAccessory
     const stale = {
       UUID: 'uuid-stale',
       displayName: 'Stale',
       context: {},
     } as PlatformAccessory
 
-    platform.configureAccessory(cached)
+    platform.configureAccessory(cachedAccessory)
     platform.configureAccessory(stale)
     api.emit('didFinishLaunching')
 
@@ -178,6 +183,45 @@ describe('ConcertPlatform', () => {
       [stale],
     )
     expect(cached.displayName).toBe('Theater')
+    expect(log.info).toHaveBeenCalledWith('Renamed accessory "Old Name" → "Theater"')
+    api.emit('shutdown')
+  })
+
+  it('renames a cached accessory without updateDisplayName via HAP fallback', () => {
+    const api = createMockApi()
+    const log = createLog()
+    const config: ConcertPlatformConfig = {
+      platform: 'Concert',
+      name: 'Theater',
+      host: '192.168.1.50',
+      accessoryName: 'Living Room AVR',
+    }
+
+    const platform = new ConcertPlatform(log, config, api)
+    const uuid = api.hap.uuid.generate('concert-192.168.1.50:50000:z1')
+    const hapAccessory = { displayName: 'Old Name' }
+    const cached = {
+      UUID: uuid,
+      displayName: 'Old Name',
+      context: {},
+      _associatedHAPAccessory: hapAccessory,
+      getService: jest.fn().mockReturnValue({
+        setCharacteristic: jest.fn().mockReturnThis(),
+        getCharacteristic: jest.fn().mockReturnValue({
+          onGet: jest.fn().mockReturnThis(),
+          onSet: jest.fn().mockReturnThis(),
+        }),
+        updateCharacteristic: jest.fn(),
+      }),
+      addService: jest.fn(),
+    } as unknown as PlatformAccessory
+
+    platform.configureAccessory(cached)
+    api.emit('didFinishLaunching')
+
+    expect(cached.displayName).toBe('Living Room AVR')
+    expect(hapAccessory.displayName).toBe('Living Room AVR')
+    expect(log.info).toHaveBeenCalledWith('Renamed accessory "Old Name" → "Living Room AVR"')
     api.emit('shutdown')
   })
 

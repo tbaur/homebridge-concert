@@ -11,6 +11,13 @@ import { ReceiverAccessory } from '../../src/devices/receiver'
 import type { ConcertClient } from '../../src/api'
 import type ConcertPlatform from '../../src/platform'
 
+class FakeHapStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`HapStatusError:${status}`)
+    this.name = 'HapStatusError'
+  }
+}
+
 function createPlatform() {
   const onChar = {
     onGet: jest.fn().mockReturnThis(),
@@ -37,6 +44,11 @@ function createPlatform() {
       SerialNumber: 'SerialNumber',
       FirmwareRevision: 'FirmwareRevision',
       Name: 'Name',
+    },
+    api: {
+      hap: {
+        HapStatusError: FakeHapStatusError,
+      },
     },
     log: {
       info: jest.fn(),
@@ -82,7 +94,7 @@ describe('ReceiverAccessory', () => {
     await setHandler(true)
 
     expect(client.setPower).toHaveBeenCalledWith(true)
-    expect(platform.log.info).toHaveBeenCalledWith(expect.stringContaining('on'))
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S: ON')
   })
 
   it('sets FirmwareRevision from the package version', () => {
@@ -96,7 +108,7 @@ describe('ReceiverAccessory', () => {
     expect(infoService.setCharacteristic).toHaveBeenCalledWith('FirmwareRevision', expect.stringMatching(/^\d+\.\d+\.\d+/))
   })
 
-  it('reverts the characteristic when setPower fails', async () => {
+  it('reverts the characteristic and throws HapStatusError when setPower fails', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = {
       setPower: jest.fn().mockRejectedValue(new Error('offline')),
@@ -106,8 +118,9 @@ describe('ReceiverAccessory', () => {
     new ReceiverAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
 
-    await expect(setHandler(true)).rejects.toThrow('offline')
+    await expect(setHandler(true)).rejects.toBeInstanceOf(FakeHapStatusError)
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', false)
+    expect(platform.log.error).toHaveBeenCalledWith(expect.stringContaining('offline'))
   })
 
   it('polls power state into HomeKit', async () => {

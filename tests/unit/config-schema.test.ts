@@ -19,14 +19,25 @@ describe('config.schema.json', () => {
     expect(schema.schema.required).toEqual(expect.arrayContaining(['name', 'host']))
   })
 
-  it('defaults the control port to 50000', () => {
+  it('defaults the control port to 50000 and refreshRate to 90', () => {
     expect(schema.schema.properties.port.default).toBe(50_000)
+    expect(schema.schema.properties.options.properties.refreshRate.default).toBe(90)
   })
 
-  it('bounds refreshRate between 5 and 86400', () => {
-    const refreshRate = schema.schema.properties.options.properties.refreshRate
-    expect(refreshRate.minimum).toBe(5)
-    expect(refreshRate.maximum).toBe(86_400)
+  it('uses editable integer fields (no min/max sliders) for port and refreshRate', () => {
+    const port = schema.schema.properties.port as { minimum?: number; maximum?: number }
+    const refreshRate = schema.schema.properties.options.properties.refreshRate as {
+      minimum?: number
+      maximum?: number
+    }
+    expect(port.minimum).toBeUndefined()
+    expect(port.maximum).toBeUndefined()
+    expect(refreshRate.minimum).toBeUndefined()
+    expect(refreshRate.maximum).toBeUndefined()
+    expect(schema.form).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'port', type: 'integer' }),
+      expect.objectContaining({ key: 'options.refreshRate', type: 'integer' }),
+    ]))
   })
 
   it('package name matches PLUGIN_NAME', () => {

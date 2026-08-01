@@ -7,7 +7,7 @@
 - ✅ Power on / standby exposed as a HomeKit Switch
 - ✅ Zone 1 (main) or Zone 2 targeting
 - ✅ LAN IP control over TCP port 50000 (AudioControl X/XR automation protocol)
-- ✅ Configurable power-state polling (30s default, 5s–86400s clamp)
+- ✅ Configurable power-state polling (90s default, 5s–86400s clamp)
 - ✅ Bounded connect and request timeouts with a capped response buffer
 - ✅ Short-lived TCP connections per command (no sticky idle sockets)
 - ✅ Startup config validation (fatal host errors; warn-and-default for port/zone/refreshRate)

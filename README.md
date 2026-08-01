@@ -18,7 +18,7 @@ Control power on your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple
 
 ### Reliability
 - **LAN IP control** — Talks to the unit over TCP port `50000` using the AudioControl X/XR automation protocol
-- **State polling** — Refreshes On/Off from the receiver on a configurable interval (default every 30s; clamped 5s–86400s)
+- **State polling** — Refreshes On/Off from the receiver on a configurable interval (default every 90s; clamped 5s–86400s)
 - **Bounded timeouts** — Connect and request timeouts so a stalled receiver cannot hang Homebridge; response buffers are capped
 - **Readable logs** — Power transitions log once; the first poll failure warns, then further failures demote to debug until recovery; frame dumps stay at debug
 - **Startup config validation** — A missing/invalid host is fatal (cached accessories are cleared); out-of-range port/zone/refreshRate warn and fall back/clamp
@@ -66,7 +66,7 @@ Or add the platform to your `config.json`:
       "zone": 1,
       "model": "Concert XR-8S",
       "options": {
-        "refreshRate": 30
+        "refreshRate": 90
       }
     }
   ]
@@ -93,7 +93,7 @@ The power switch appears in the Home app after restart. Toggle it on to power th
 | `accessoryName` | | HomeKit display name for the power switch (defaults to the platform `name`) |
 | `zone` | | Zone to control: `1` (main, default) or `2` |
 | `model` | | Model shown in Accessory Information (default: `Concert XR-8S`) |
-| `options.refreshRate` | | Seconds between power-state polls (default: 30, minimum: 5, maximum: 86400). Below-minimum / non-numeric values fall back to the default; above-maximum values are clamped. |
+| `options.refreshRate` | | Seconds between power-state polls (default: 90, minimum: 5, maximum: 86400). Below-minimum / non-numeric values fall back to the default; above-maximum values are clamped. |
 
 ## Not Working?
 

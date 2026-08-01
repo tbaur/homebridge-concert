@@ -8,6 +8,7 @@
  */
 
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge'
+import { HAPStatus } from 'homebridge'
 
 import type { ConcertClient } from '../api'
 import { readPluginVersion } from '../settings'
@@ -38,16 +39,22 @@ export class ReceiverAccessory {
     const { Service, Characteristic } = this.platform
     const context = this.accessory.context as ReceiverContext
 
+    const displayName = this.accessory.displayName
+
     this.accessory.getService(Service.AccessoryInformation)!
+      .setCharacteristic(Characteristic.Name, displayName)
       .setCharacteristic(Characteristic.Manufacturer, 'AudioControl')
       .setCharacteristic(Characteristic.Model, context.model || 'Concert XR')
       .setCharacteristic(Characteristic.SerialNumber, `${context.host}:${context.port}`)
       .setCharacteristic(Characteristic.FirmwareRevision, readPluginVersion())
 
     this.switchService = this.accessory.getService(Service.Switch)
-      ?? this.accessory.addService(Service.Switch, this.accessory.displayName)
+      ?? this.accessory.addService(Service.Switch, displayName)
 
-    this.switchService.setCharacteristic(Characteristic.Name, this.accessory.displayName)
+    // Keep cached service.displayName in sync so the next deserialize uses the
+    // configured name (HAP validates service displayName independently).
+    ;(this.switchService as Service & { displayName?: string }).displayName = displayName
+    this.switchService.setCharacteristic(Characteristic.Name, displayName)
 
     this.switchService.getCharacteristic(Characteristic.On)
       .onGet(this.handleGetOn.bind(this))
@@ -68,14 +75,16 @@ export class ReceiverAccessory {
       // Only apply if nothing newer (another set) landed while we awaited.
       if (setGeneration === this.generation) {
         this.isOn = on
-        this.platform.log.info(`${this.accessory.displayName} → ${on ? 'on' : 'standby'}`)
+        this.platform.log.info(`${this.accessory.displayName}: ${on ? 'ON' : 'STANDBY'}`)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.platform.log.error(`${this.accessory.displayName} power set failed: ${message}`)
       // Revert the characteristic so HomeKit does not show a lying state.
       this.switchService.updateCharacteristic(this.platform.Characteristic.On, this.isOn)
-      throw error
+      // HapStatusError (not a raw Error) so Homebridge does not log an
+      // "Unhandled error thrown inside write handler" warning.
+      throw new this.platform.api.hap.HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE)
     }
   }
 
@@ -103,7 +112,9 @@ export class ReceiverAccessory {
         return
       }
       if (on !== this.isOn) {
-        this.platform.log.info(`${this.accessory.displayName} power is now ${on ? 'on' : 'standby'}`)
+        this.platform.log.info(
+          `${this.accessory.displayName}: ${on ? 'ON' : 'STANDBY'} (external)`,
+        )
       }
       this.isOn = on
       this.switchService.updateCharacteristic(this.platform.Characteristic.On, on)

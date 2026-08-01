@@ -24,9 +24,8 @@
         "title": "Control Port",
         "type": "integer",
         "default": 50000,
-        "minimum": 1,
-        "maximum": 65535,
-        "description": "TCP port for IP automation control. Default is 50000."
+        "placeholder": "50000",
+        "description": "TCP port for IP automation control. Default is 50000. Out-of-range values fall back to 50000 at startup."
       },
       "accessoryName": {
         "title": "Accessory Name",
@@ -56,13 +55,27 @@
           "refreshRate": {
             "title": "Refresh Rate (seconds)",
             "type": "integer",
-            "default": 30,
-            "minimum": 5,
-            "maximum": 86400,
-            "description": "How often to poll the receiver for power state. Minimum 5 seconds, maximum 86400 (24 hours)."
+            "default": 90,
+            "placeholder": "90",
+            "description": "How often to poll the receiver for power state. Default 90 seconds. Values below 5 fall back to 90; values above 86400 are clamped."
           }
         }
       }
     }
-  }
+  },
+  "form": [
+    "name",
+    "host",
+    {
+      "key": "port",
+      "type": "integer"
+    },
+    "accessoryName",
+    "zone",
+    "model",
+    {
+      "key": "options.refreshRate",
+      "type": "integer"
+    }
+  ]
 }
