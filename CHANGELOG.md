@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.2](https://github.com/tbaur/homebridge-concert/compare/v0.1.1...v0.1.2) (2026-08-01)
+
+
+### Bug Fixes
+
+* verify power after missing ack and polish config/logs ([#5](https://github.com/tbaur/homebridge-concert/issues/5)) ([b698706](https://github.com/tbaur/homebridge-concert/commit/b6987066ff8663e4b6c58f25672d83e66fbb133c))
+
 ## [0.1.1](https://github.com/tbaur/homebridge-concert/compare/v0.1.0...v0.1.1) (2026-08-01)
 
 
