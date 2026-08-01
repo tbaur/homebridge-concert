@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.4](https://github.com/tbaur/homebridge-concert/compare/v0.1.3...v0.1.4) (2026-08-01)
+
+
+### Bug Fixes
+
+* stop labeling HomeKit power sets as external ([#9](https://github.com/tbaur/homebridge-concert/issues/9)) ([83ebacb](https://github.com/tbaur/homebridge-concert/commit/83ebacb5b011e93e45d4a908af1023d97ba84352))
+
 ## [0.1.3](https://github.com/tbaur/homebridge-concert/compare/v0.1.2...v0.1.3) (2026-08-01)
 
 
