@@ -8,7 +8,7 @@
  * @fileoverview Plugin-wide constants for AudioControl Concert IP control.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.POWER_VERIFY_ATTEMPTS = exports.POWER_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
+exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.POWER_QUERY_RETRY_MS = exports.POWER_QUERY_RETRIES = exports.POWER_VERIFY_ATTEMPTS = exports.POWER_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
 exports.readPluginVersion = readPluginVersion;
 /** Name used to register the plugin with Homebridge (must match package.json name). */
 exports.PLUGIN_NAME = 'homebridge-concert';
@@ -48,6 +48,13 @@ exports.DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 exports.POWER_SETTLE_MS = 1_500;
 /** How many settle+query attempts after a missing power-set ack. */
 exports.POWER_VERIFY_ATTEMPTS = 2;
+/**
+ * Extra power-query attempts after a ConnectionError.
+ * XR units occasionally accept TCP then stay silent for one request.
+ */
+exports.POWER_QUERY_RETRIES = 1;
+/** Delay before retrying a timed-out / closed power query. */
+exports.POWER_QUERY_RETRY_MS = 500;
 /** Maximum time allowed for establishing a TCP connection. */
 exports.DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 /**

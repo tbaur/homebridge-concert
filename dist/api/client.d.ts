@@ -33,8 +33,14 @@ export declare class ConcertClient {
     private readonly log;
     private readonly createConnection;
     constructor(options: ConcertClientOptions);
-    /** Query whether the configured zone is powered on. */
+    /**
+     * Query whether the configured zone is powered on.
+     *
+     * Retries once on ConnectionError — XR units sometimes accept TCP then
+     * stay silent for a single request before answering normally.
+     */
     getPowerState(): Promise<boolean>;
+    private queryPowerOnce;
     /** Power the configured zone on (discrete RC5 Power On). */
     powerOn(): Promise<void>;
     /** Put the configured zone into standby (discrete RC5 Power Off). */

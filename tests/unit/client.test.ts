@@ -19,7 +19,10 @@ import {
   RC5_SYSTEM_ZONE1,
   buildPowerOn,
 } from '../../src/api/protocol'
-import { MAX_RESPONSE_BUFFER_BYTES } from '../../src/settings'
+import {
+  MAX_RESPONSE_BUFFER_BYTES,
+  POWER_QUERY_RETRY_MS,
+} from '../../src/settings'
 
 class FakeSocket extends EventEmitter {
   destroyed = false
@@ -177,10 +180,9 @@ describe('ConcertClient', () => {
     await expect(client.getPowerState()).rejects.toBeInstanceOf(ConnectionError)
   })
 
-  it('times out if connect never completes', async () => {
+  it('times out if connect never completes (and retry)', async () => {
     jest.useFakeTimers()
-    const socket = new FakeSocket()
-    const createConnection = jest.fn(() => socket as unknown as net.Socket)
+    const createConnection = jest.fn(() => new FakeSocket() as unknown as net.Socket)
 
     const client = new ConcertClient({
       host: '192.168.1.50',
@@ -188,16 +190,55 @@ describe('ConcertClient', () => {
       createConnection: createConnection as unknown as typeof net.createConnection,
     })
 
-    const pending = client.getPowerState()
-    jest.advanceTimersByTime(100)
-    await expect(pending).rejects.toThrow(/Timed out connecting/)
+    // Attach the rejection handler before timers fire so Jest does not see an
+    // unhandled rejection during advanceTimersByTimeAsync.
+    const pending = expect(client.getPowerState()).rejects.toThrow(/Timed out connecting/)
+    await jest.advanceTimersByTimeAsync(100) // first attempt
+    await jest.advanceTimersByTimeAsync(POWER_QUERY_RETRY_MS)
+    await jest.advanceTimersByTimeAsync(100) // retry attempt
+    await pending
+    expect(createConnection).toHaveBeenCalledTimes(2)
   })
 
-  it('times out if a response never arrives after connect', async () => {
+  it('times out if a response never arrives after connect (and retry)', async () => {
     jest.useFakeTimers()
-    const socket = new FakeSocket()
     const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
       queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      requestTimeoutMs: 100,
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = expect(client.getPowerState()).rejects.toThrow(
+      'Timed out waiting for response',
+    )
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(100) // first attempt timeout
+    await jest.advanceTimersByTimeAsync(POWER_QUERY_RETRY_MS) // retry delay
+    await jest.advanceTimersByTimeAsync(100) // second attempt timeout
+    await pending
+    expect(createConnection).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a timed-out power query and succeeds', async () => {
+    jest.useFakeTimers()
+    let call = 0
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      const index = call++
+      queueMicrotask(() => {
+        socket.emit('connect')
+        if (index >= 1) {
+          queueMicrotask(() => {
+            socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+          })
+        }
+      })
       return socket as unknown as net.Socket
     })
 
@@ -209,8 +250,10 @@ describe('ConcertClient', () => {
 
     const pending = client.getPowerState()
     await Promise.resolve()
-    jest.advanceTimersByTime(100)
-    await expect(pending).rejects.toThrow(/Timed out waiting for response/)
+    await jest.advanceTimersByTimeAsync(100) // first attempt timeout
+    await jest.advanceTimersByTimeAsync(POWER_QUERY_RETRY_MS)
+    await expect(pending).resolves.toBe(true)
+    expect(createConnection).toHaveBeenCalledTimes(2)
   })
 
   it('rejects oversized response buffers', async () => {

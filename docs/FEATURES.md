@@ -13,6 +13,7 @@
 - ✅ Startup config validation (fatal host errors; warn-and-default for port/zone/refreshRate)
 - ✅ Stale-accessory cleanup when host/port/zone changes; cached accessories cleared on invalid config
 - ✅ Set/poll race protection and single-flight refresh
+- ✅ One automatic retry on transient power-query timeouts
 - ✅ Quiet consecutive poll failures after the first warn
 - ✅ Homebridge UI settings form via `config.schema.json`
 - ✅ Homebridge v1.6.0+ and v2.0+ support

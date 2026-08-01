@@ -19,6 +19,8 @@ import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_ZONE,
   MAX_RESPONSE_BUFFER_BYTES,
+  POWER_QUERY_RETRIES,
+  POWER_QUERY_RETRY_MS,
   POWER_SETTLE_MS,
   POWER_VERIFY_ATTEMPTS,
 } from '../settings'
@@ -73,8 +75,34 @@ export class ConcertClient {
     this.createConnection = options.createConnection ?? net.createConnection
   }
 
-  /** Query whether the configured zone is powered on. */
+  /**
+   * Query whether the configured zone is powered on.
+   *
+   * Retries once on ConnectionError — XR units sometimes accept TCP then
+   * stay silent for a single request before answering normally.
+   */
   async getPowerState(): Promise<boolean> {
+    const attempts = 1 + POWER_QUERY_RETRIES
+    let lastError: unknown
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await this.queryPowerOnce()
+      } catch (error) {
+        lastError = error
+        if (!(error instanceof ConnectionError) || attempt >= attempts) {
+          throw error
+        }
+        this.log.debug?.(
+          `Power query failed (${error.message}); retrying `
+          + `(${attempt}/${POWER_QUERY_RETRIES})`,
+        )
+        await sleep(POWER_QUERY_RETRY_MS)
+      }
+    }
+    throw lastError
+  }
+
+  private async queryPowerOnce(): Promise<boolean> {
     const response = await this.send(buildPowerQuery(this.zone), COMMAND_POWER)
     this.assertOk(response, 'power query')
     return isPowerOn(response.data)
@@ -207,7 +235,10 @@ export class ConcertClient {
         }
         requestTimer = setTimeout(() => {
           const hint = buffer.length > 0 ? ` (received ${formatFrame(buffer)})` : ''
-          finish(new ConnectionError(`Timed out waiting for response from ${host}:${port}${hint}`))
+          this.log.debug?.(
+            `Timed out waiting for response from ${host}:${port}${hint}`,
+          )
+          finish(new ConnectionError('Timed out waiting for response'))
         }, this.requestTimeoutMs)
 
         socket.write(request, (writeError) => {

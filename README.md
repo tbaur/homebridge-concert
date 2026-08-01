@@ -20,7 +20,7 @@ Control power on your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple
 - **LAN IP control** — Talks to the unit over TCP port `50000` using the AudioControl X/XR automation protocol
 - **State polling** — Refreshes On/Off from the receiver on a configurable interval (default every 90s; clamped 5s–86400s)
 - **Bounded timeouts** — Connect and request timeouts so a stalled receiver cannot hang Homebridge; response buffers are capped
-- **Readable logs** — Power transitions log once; the first poll failure warns, then further failures demote to debug until recovery; frame dumps stay at debug
+- **Resilient polling** — One automatic retry on a silent/timed-out power query; the first poll failure warns briefly, then further failures demote to debug until recovery
 - **Startup config validation** — A missing/invalid host is fatal (cached accessories are cleared); out-of-range port/zone/refreshRate warn and fall back/clamp
 
 ### Quality
