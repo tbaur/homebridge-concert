@@ -175,8 +175,55 @@ describe('ReceiverAccessory', () => {
 
     // Set won: On should remain true; the late poll must not force Off.
     expect(switchService.updateCharacteristic).not.toHaveBeenCalledWith('On', false)
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S: ON')
+    expect(platform.log.info).not.toHaveBeenCalledWith(expect.stringContaining('(external)'))
     const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
     expect(getHandler()).toBe(true)
+  })
+
+  it('logs ON from HomeKit set even when a poll starts during setPower', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    let resolveSet: (() => void) | undefined
+    let resolvePoll: ((value: boolean) => void) | undefined
+    const client = {
+      setPower: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+        resolveSet = resolve
+      })),
+      getPowerState: jest.fn().mockImplementation(() => new Promise<boolean>((resolve) => {
+        resolvePoll = resolve
+      })),
+    } as unknown as ConcertClient
+
+    const handler = new ReceiverAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+
+    // HomeKit write in flight, then a poll tick starts (common when setPower
+    // waits out a missing RC5 ack + verify). Previously a shared generation
+    // counter made the set drop its ON log and the poll claim "(external)".
+    const pendingSet = setHandler(true)
+    const pendingRefresh = handler.refresh()
+    resolveSet?.()
+    await pendingSet
+    resolvePoll?.(true)
+    await pendingRefresh
+
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S: ON')
+    expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S: ON (external)')
+    const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
+    expect(getHandler()).toBe(true)
+  })
+
+  it('logs (external) only for poll-observed changes', async () => {
+    const { platform, accessory } = createPlatform()
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn().mockResolvedValue(true),
+    } as unknown as ConcertClient
+
+    const handler = new ReceiverAccessory(platform, accessory, client)
+    await handler.refresh()
+
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S: ON (external)')
   })
 
   it('returns the cached On value from get', () => {
