@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.3](https://github.com/tbaur/homebridge-concert/compare/v0.1.2...v0.1.3) (2026-08-01)
+
+
+### Bug Fixes
+
+* retry silent power queries and shorten poll logs ([#7](https://github.com/tbaur/homebridge-concert/issues/7)) ([ca23016](https://github.com/tbaur/homebridge-concert/commit/ca230160d1d32dccf37d2a05bfac39c8c79d428a))
+
 ## [0.1.2](https://github.com/tbaur/homebridge-concert/compare/v0.1.1...v0.1.2) (2026-08-01)
 
 
