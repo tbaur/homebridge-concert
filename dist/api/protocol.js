@@ -11,13 +11,19 @@
  *   Request:  St Zn Cc Dl Data... Et
  *   Response: St Zn Cc Ac Dl Data... Et
  *
- * where St=0x21, Et=0x0D. Power is command code 0x00.
+ * where St=0x21, Et=0x0D.
+ *
+ * Power *query* uses command 0x00 with data 0xF0. Power *set* uses Simulate
+ * RC5 IR (0x08) with discrete Power On / Power Off codes — X/XR units treat
+ * Power (0x00) as query-oriented and may not answer a direct set.
  *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ANSWER_OK = exports.POWER_QUERY = exports.POWER_ON = exports.POWER_STANDBY = exports.COMMAND_POWER = exports.FRAME_END = exports.FRAME_START = void 0;
+exports.ANSWER_OK = exports.RC5_POWER_OFF = exports.RC5_POWER_ON = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.POWER_QUERY = exports.POWER_ON = exports.POWER_STANDBY = exports.COMMAND_RC5 = exports.COMMAND_POWER = exports.FRAME_END = exports.FRAME_START = void 0;
 exports.buildRequest = buildRequest;
+exports.rc5SystemForZone = rc5SystemForZone;
+exports.buildRc5 = buildRc5;
 exports.buildPowerOn = buildPowerOn;
 exports.buildPowerStandby = buildPowerStandby;
 exports.buildPowerQuery = buildPowerQuery;
@@ -30,14 +36,24 @@ const errors_1 = require("../errors");
 exports.FRAME_START = 0x21;
 /** End-of-frame byte (carriage return). */
 exports.FRAME_END = 0x0D;
-/** Power / standby command code. */
+/** Power / standby status command code (query + status responses). */
 exports.COMMAND_POWER = 0x00;
-/** Enter standby. */
+/** Simulate RC5 IR command (used for discrete power on/off). */
+exports.COMMAND_RC5 = 0x08;
+/** Enter standby (status / legacy set data byte). */
 exports.POWER_STANDBY = 0x00;
-/** Power on. */
+/** Power on (status / legacy set data byte). */
 exports.POWER_ON = 0x01;
 /** Request current power state (query sentinel). */
 exports.POWER_QUERY = 0xF0;
+/** RC5 system code for Zone 1 advanced / discrete functions. */
+exports.RC5_SYSTEM_ZONE1 = 0x10;
+/** RC5 system code for Zone 2. */
+exports.RC5_SYSTEM_ZONE2 = 0x17;
+/** Discrete RC5 Power On (16-123 / 23-123). */
+exports.RC5_POWER_ON = 0x7B;
+/** Discrete RC5 Power Off (16-124 / 23-124). */
+exports.RC5_POWER_OFF = 0x7C;
 /** Answer code: status update / no problems. */
 exports.ANSWER_OK = 0x00;
 /** Human-readable names for known non-OK answer codes. */
@@ -76,13 +92,38 @@ function buildRequest(zone, command, data = Buffer.alloc(0)) {
     frame[frame.length - 1] = exports.FRAME_END;
     return frame;
 }
-/** Build a power-on request for the given zone. */
-function buildPowerOn(zone) {
-    return buildRequest(zone, exports.COMMAND_POWER, Buffer.from([exports.POWER_ON]));
+/** RC5 system byte for the given automation zone. */
+function rc5SystemForZone(zone) {
+    if (zone === 2) {
+        return exports.RC5_SYSTEM_ZONE2;
+    }
+    if (zone === 1) {
+        return exports.RC5_SYSTEM_ZONE1;
+    }
+    throw new RangeError(`Zone must be 1 or 2, got ${zone}`);
 }
-/** Build a standby (power-off) request for the given zone. */
+/**
+ * Build a Simulate RC5 IR request.
+ *
+ * @param zone - Automation zone (1 or 2) — also selects the RC5 system code
+ * @param system - RC5 system code (Data1)
+ * @param command - RC5 command code (Data2)
+ */
+function buildRc5(zone, system, command) {
+    return buildRequest(zone, exports.COMMAND_RC5, Buffer.from([system, command]));
+}
+/**
+ * Build a discrete power-on request (RC5 Power On).
+ *
+ * AudioControl docs emphasize IR simulation for control; Power (0x00) is used
+ * for status query/response and may not accept a direct set on X/XR units.
+ */
+function buildPowerOn(zone) {
+    return buildRc5(zone, rc5SystemForZone(zone), exports.RC5_POWER_ON);
+}
+/** Build a discrete power-off / standby request (RC5 Power Off). */
 function buildPowerStandby(zone) {
-    return buildRequest(zone, exports.COMMAND_POWER, Buffer.from([exports.POWER_STANDBY]));
+    return buildRc5(zone, rc5SystemForZone(zone), exports.RC5_POWER_OFF);
 }
 /** Build a power-state query for the given zone. */
 function buildPowerQuery(zone) {

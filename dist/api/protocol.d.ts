@@ -10,7 +10,11 @@
  *   Request:  St Zn Cc Dl Data... Et
  *   Response: St Zn Cc Ac Dl Data... Et
  *
- * where St=0x21, Et=0x0D. Power is command code 0x00.
+ * where St=0x21, Et=0x0D.
+ *
+ * Power *query* uses command 0x00 with data 0xF0. Power *set* uses Simulate
+ * RC5 IR (0x08) with discrete Power On / Power Off codes — X/XR units treat
+ * Power (0x00) as query-oriented and may not answer a direct set.
  *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
@@ -18,14 +22,24 @@
 export declare const FRAME_START = 33;
 /** End-of-frame byte (carriage return). */
 export declare const FRAME_END = 13;
-/** Power / standby command code. */
+/** Power / standby status command code (query + status responses). */
 export declare const COMMAND_POWER = 0;
-/** Enter standby. */
+/** Simulate RC5 IR command (used for discrete power on/off). */
+export declare const COMMAND_RC5 = 8;
+/** Enter standby (status / legacy set data byte). */
 export declare const POWER_STANDBY = 0;
-/** Power on. */
+/** Power on (status / legacy set data byte). */
 export declare const POWER_ON = 1;
 /** Request current power state (query sentinel). */
 export declare const POWER_QUERY = 240;
+/** RC5 system code for Zone 1 advanced / discrete functions. */
+export declare const RC5_SYSTEM_ZONE1 = 16;
+/** RC5 system code for Zone 2. */
+export declare const RC5_SYSTEM_ZONE2 = 23;
+/** Discrete RC5 Power On (16-123 / 23-123). */
+export declare const RC5_POWER_ON = 123;
+/** Discrete RC5 Power Off (16-124 / 23-124). */
+export declare const RC5_POWER_OFF = 124;
 /** Answer code: status update / no problems. */
 export declare const ANSWER_OK = 0;
 /** Parsed response frame from the receiver. */
@@ -43,9 +57,24 @@ export interface ProtocolResponse {
  * @param data - Command parameters (may be empty)
  */
 export declare function buildRequest(zone: number, command: number, data?: Buffer): Buffer;
-/** Build a power-on request for the given zone. */
+/** RC5 system byte for the given automation zone. */
+export declare function rc5SystemForZone(zone: number): number;
+/**
+ * Build a Simulate RC5 IR request.
+ *
+ * @param zone - Automation zone (1 or 2) — also selects the RC5 system code
+ * @param system - RC5 system code (Data1)
+ * @param command - RC5 command code (Data2)
+ */
+export declare function buildRc5(zone: number, system: number, command: number): Buffer;
+/**
+ * Build a discrete power-on request (RC5 Power On).
+ *
+ * AudioControl docs emphasize IR simulation for control; Power (0x00) is used
+ * for status query/response and may not accept a direct set on X/XR units.
+ */
 export declare function buildPowerOn(zone: number): Buffer;
-/** Build a standby (power-off) request for the given zone. */
+/** Build a discrete power-off / standby request (RC5 Power Off). */
 export declare function buildPowerStandby(zone: number): Buffer;
 /** Build a power-state query for the given zone. */
 export declare function buildPowerQuery(zone: number): Buffer;

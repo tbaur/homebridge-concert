@@ -35,9 +35,9 @@ export declare class ConcertClient {
     constructor(options: ConcertClientOptions);
     /** Query whether the configured zone is powered on. */
     getPowerState(): Promise<boolean>;
-    /** Power the configured zone on. */
+    /** Power the configured zone on (discrete RC5 Power On). */
     powerOn(): Promise<void>;
-    /** Put the configured zone into standby. */
+    /** Put the configured zone into standby (discrete RC5 Power Off). */
     powerStandby(): Promise<void>;
     /** Set power from a boolean HomeKit On value. */
     setPower(on: boolean): Promise<void>;
@@ -45,6 +45,9 @@ export declare class ConcertClient {
     /**
      * Open a TCP connection, write one request frame, and resolve with the first
      * matching response frame. Always closes the socket afterward.
+     *
+     * @param expectedCommands - Accept the first response whose command is in this list
+     *   (RC5 set may reply with 0x08, and often also emits a Power 0x00 status)
      */
     private send;
 }
