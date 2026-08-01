@@ -113,8 +113,7 @@ class ReceiverAccessory {
             const message = error instanceof Error ? error.message : String(error);
             if (!this.pollFailureActive) {
                 this.pollFailureActive = true;
-                this.platform.log.warn(`${this.accessory.displayName} power poll failed: ${message} `
-                    + '(further failures at debug until recovery)');
+                this.platform.log.warn(`${this.accessory.displayName} power poll failed: ${message}`);
             }
             else {
                 this.platform.log.debug?.(`${this.accessory.displayName} power poll failed: ${message}`);

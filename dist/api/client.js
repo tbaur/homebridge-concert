@@ -41,8 +41,32 @@ class ConcertClient {
         this.log = options.logger ?? {};
         this.createConnection = options.createConnection ?? node_net_1.default.createConnection;
     }
-    /** Query whether the configured zone is powered on. */
+    /**
+     * Query whether the configured zone is powered on.
+     *
+     * Retries once on ConnectionError — XR units sometimes accept TCP then
+     * stay silent for a single request before answering normally.
+     */
     async getPowerState() {
+        const attempts = 1 + settings_1.POWER_QUERY_RETRIES;
+        let lastError;
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                return await this.queryPowerOnce();
+            }
+            catch (error) {
+                lastError = error;
+                if (!(error instanceof errors_1.ConnectionError) || attempt >= attempts) {
+                    throw error;
+                }
+                this.log.debug?.(`Power query failed (${error.message}); retrying `
+                    + `(${attempt}/${settings_1.POWER_QUERY_RETRIES})`);
+                await sleep(settings_1.POWER_QUERY_RETRY_MS);
+            }
+        }
+        throw lastError;
+    }
+    async queryPowerOnce() {
         const response = await this.send((0, protocol_1.buildPowerQuery)(this.zone), protocol_1.COMMAND_POWER);
         this.assertOk(response, 'power query');
         return (0, protocol_1.isPowerOn)(response.data);
@@ -159,7 +183,8 @@ class ConcertClient {
                 }
                 requestTimer = setTimeout(() => {
                     const hint = buffer.length > 0 ? ` (received ${(0, protocol_1.formatFrame)(buffer)})` : '';
-                    finish(new errors_1.ConnectionError(`Timed out waiting for response from ${host}:${port}${hint}`));
+                    this.log.debug?.(`Timed out waiting for response from ${host}:${port}${hint}`);
+                    finish(new errors_1.ConnectionError('Timed out waiting for response'));
                 }, this.requestTimeoutMs);
                 socket.write(request, (writeError) => {
                     if (writeError) {

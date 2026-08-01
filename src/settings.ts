@@ -56,6 +56,15 @@ export const POWER_SETTLE_MS = 1_500
 /** How many settle+query attempts after a missing power-set ack. */
 export const POWER_VERIFY_ATTEMPTS = 2
 
+/**
+ * Extra power-query attempts after a ConnectionError.
+ * XR units occasionally accept TCP then stay silent for one request.
+ */
+export const POWER_QUERY_RETRIES = 1
+
+/** Delay before retrying a timed-out / closed power query. */
+export const POWER_QUERY_RETRY_MS = 500
+
 /** Maximum time allowed for establishing a TCP connection. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 5_000
 

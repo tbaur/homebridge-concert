@@ -130,11 +130,12 @@ export class ReceiverAccessory {
       if (!this.pollFailureActive) {
         this.pollFailureActive = true
         this.platform.log.warn(
-          `${this.accessory.displayName} power poll failed: ${message} `
-          + '(further failures at debug until recovery)',
+          `${this.accessory.displayName} power poll failed: ${message}`,
         )
       } else {
-        this.platform.log.debug?.(`${this.accessory.displayName} power poll failed: ${message}`)
+        this.platform.log.debug?.(
+          `${this.accessory.displayName} power poll failed: ${message}`,
+        )
       }
     }
   }

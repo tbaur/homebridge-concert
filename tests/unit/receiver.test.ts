@@ -140,7 +140,7 @@ describe('ReceiverAccessory', () => {
     const { platform, accessory } = createPlatform()
     const client = {
       setPower: jest.fn(),
-      getPowerState: jest.fn().mockRejectedValue(new Error('timeout')),
+      getPowerState: jest.fn().mockRejectedValue(new Error('Timed out waiting for response')),
     } as unknown as ConcertClient
 
     const handler = new ReceiverAccessory(platform, accessory, client)
@@ -148,7 +148,12 @@ describe('ReceiverAccessory', () => {
     await handler.refresh()
 
     expect(platform.log.warn).toHaveBeenCalledTimes(1)
-    expect(platform.log.debug).toHaveBeenCalled()
+    expect(platform.log.warn).toHaveBeenCalledWith(
+      'XR-8S power poll failed: Timed out waiting for response',
+    )
+    expect(platform.log.debug).toHaveBeenCalledWith(
+      'XR-8S power poll failed: Timed out waiting for response',
+    )
   })
 
   it('discards a stale poll that finishes after a set', async () => {
