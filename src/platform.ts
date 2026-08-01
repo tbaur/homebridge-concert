@@ -52,7 +52,7 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   constructor(
     public readonly log: Logging,
     config: ConcertPlatformConfig,
-    private readonly api: API,
+    public readonly api: API,
   ) {
     this.Service = api.hap.Service
     this.Characteristic = api.hap.Characteristic
@@ -149,9 +149,7 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
       this.accessories.push(accessory)
     } else {
       accessory.context = context
-      if (accessory.displayName !== displayName) {
-        accessory.displayName = displayName
-      }
+      this.applyAccessoryDisplayName(accessory, displayName)
       this.api.updatePlatformAccessories([accessory])
       this.log.info(`Restored accessory "${displayName}" at ${host}:${port} (zone ${zone})`)
     }
@@ -167,6 +165,31 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
 
     // Immediate refresh so HomeKit has a real value shortly after launch.
     void this.handler.refresh()
+  }
+
+  /**
+   * Sync the accessory display name onto the PlatformAccessory wrapper and the
+   * underlying HAP accessory. Assigning `displayName` alone does not update what
+   * Homebridge serializes / publishes after cache restore — use `updateDisplayName`
+   * when available (Homebridge ≥1.8).
+   */
+  private applyAccessoryDisplayName(accessory: PlatformAccessory, name: string): void {
+    if (accessory.displayName === name) {
+      return
+    }
+    const previous = accessory.displayName
+    if (typeof accessory.updateDisplayName === 'function') {
+      accessory.updateDisplayName(name)
+    } else {
+      accessory.displayName = name
+      const hapAccessory = (accessory as PlatformAccessory & {
+        _associatedHAPAccessory?: { displayName?: string }
+      })._associatedHAPAccessory
+      if (hapAccessory) {
+        hapAccessory.displayName = name
+      }
+    }
+    this.log.info(`Renamed accessory "${previous}" → "${name}"`)
   }
 
   /** Unregister cached accessories that no longer match the configured target. */

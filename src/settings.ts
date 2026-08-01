@@ -27,7 +27,7 @@ export const DEFAULT_CONTROL_PORT = 50_000
 export const DEFAULT_ZONE = 1
 
 /** Default polling interval (seconds) for refreshing power state. */
-export const DEFAULT_REFRESH_RATE_SEC = 30
+export const DEFAULT_REFRESH_RATE_SEC = 90
 
 /** Minimum allowed polling interval (seconds). */
 export const MIN_REFRESH_RATE_SEC = 5
@@ -45,6 +45,16 @@ export const MAX_REFRESH_RATE_SEC = 86_400
  * AudioControl docs say the unit answers within 3 seconds.
  */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 5_000
+
+/**
+ * How long to wait after a missing power-set ack before querying state.
+ * XR units often apply RC5 Power Off without echoing a frame while the amp
+ * transitions; a short settle avoids racing the status query.
+ */
+export const POWER_SETTLE_MS = 1_500
+
+/** How many settle+query attempts after a missing power-set ack. */
+export const POWER_VERIFY_ATTEMPTS = 2
 
 /** Maximum time allowed for establishing a TCP connection. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 5_000

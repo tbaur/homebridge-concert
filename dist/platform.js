@@ -117,9 +117,7 @@ class ConcertPlatform {
         }
         else {
             accessory.context = context;
-            if (accessory.displayName !== displayName) {
-                accessory.displayName = displayName;
-            }
+            this.applyAccessoryDisplayName(accessory, displayName);
             this.api.updatePlatformAccessories([accessory]);
             this.log.info(`Restored accessory "${displayName}" at ${host}:${port} (zone ${zone})`);
         }
@@ -133,6 +131,29 @@ class ConcertPlatform {
         this.startPolling();
         // Immediate refresh so HomeKit has a real value shortly after launch.
         void this.handler.refresh();
+    }
+    /**
+     * Sync the accessory display name onto the PlatformAccessory wrapper and the
+     * underlying HAP accessory. Assigning `displayName` alone does not update what
+     * Homebridge serializes / publishes after cache restore — use `updateDisplayName`
+     * when available (Homebridge ≥1.8).
+     */
+    applyAccessoryDisplayName(accessory, name) {
+        if (accessory.displayName === name) {
+            return;
+        }
+        const previous = accessory.displayName;
+        if (typeof accessory.updateDisplayName === 'function') {
+            accessory.updateDisplayName(name);
+        }
+        else {
+            accessory.displayName = name;
+            const hapAccessory = accessory._associatedHAPAccessory;
+            if (hapAccessory) {
+                hapAccessory.displayName = name;
+            }
+        }
+        this.log.info(`Renamed accessory "${previous}" → "${name}"`);
     }
     /** Unregister cached accessories that no longer match the configured target. */
     removeStaleAccessories(keepUuid) {

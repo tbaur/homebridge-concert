@@ -39,8 +39,16 @@ export declare class ConcertClient {
     powerOn(): Promise<void>;
     /** Put the configured zone into standby (discrete RC5 Power Off). */
     powerStandby(): Promise<void>;
-    /** Set power from a boolean HomeKit On value. */
+    /**
+     * Set power from a boolean HomeKit On value.
+     *
+     * XR units sometimes apply RC5 Power On/Off without returning a frame (socket
+     * stays open until our timeout). When the ack is missing, settle briefly and
+     * confirm via Power query before failing the HomeKit write.
+     */
     setPower(on: boolean): Promise<void>;
+    /** True when a power query reports the desired on/off state. */
+    private verifyPowerState;
     private assertOk;
     /**
      * Open a TCP connection, write one request frame, and resolve with the first

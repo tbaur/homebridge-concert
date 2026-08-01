@@ -57,14 +57,50 @@ class ConcertClient {
         const response = await this.send((0, protocol_1.buildPowerStandby)(this.zone), POWER_SET_RESPONSE_COMMANDS);
         this.assertOk(response, 'standby');
     }
-    /** Set power from a boolean HomeKit On value. */
+    /**
+     * Set power from a boolean HomeKit On value.
+     *
+     * XR units sometimes apply RC5 Power On/Off without returning a frame (socket
+     * stays open until our timeout). When the ack is missing, settle briefly and
+     * confirm via Power query before failing the HomeKit write.
+     */
     async setPower(on) {
-        if (on) {
-            await this.powerOn();
+        try {
+            if (on) {
+                await this.powerOn();
+            }
+            else {
+                await this.powerStandby();
+            }
         }
-        else {
-            await this.powerStandby();
+        catch (error) {
+            if (!(error instanceof errors_1.ConnectionError)) {
+                throw error;
+            }
+            this.log.debug?.(`Power ${on ? 'on' : 'standby'} ack missing (${error.message}); verifying state`);
+            if (await this.verifyPowerState(on)) {
+                return;
+            }
+            throw error;
         }
+    }
+    /** True when a power query reports the desired on/off state. */
+    async verifyPowerState(expectedOn) {
+        for (let attempt = 0; attempt < settings_1.POWER_VERIFY_ATTEMPTS; attempt++) {
+            await sleep(settings_1.POWER_SETTLE_MS);
+            try {
+                const actual = await this.getPowerState();
+                if (actual === expectedOn) {
+                    this.log.debug?.(`Power state verified as ${expectedOn ? 'on' : 'standby'} after missing ack`);
+                    return true;
+                }
+            }
+            catch (verifyError) {
+                const message = verifyError instanceof Error ? verifyError.message : String(verifyError);
+                this.log.debug?.(`Power verify attempt ${attempt + 1} failed: ${message}`);
+            }
+        }
+        return false;
     }
     assertOk(response, operation) {
         if (response.answerCode !== protocol_1.ANSWER_OK) {
@@ -174,4 +210,9 @@ class ConcertClient {
     }
 }
 exports.ConcertClient = ConcertClient;
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
 //# sourceMappingURL=client.js.map

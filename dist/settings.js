@@ -8,7 +8,7 @@
  * @fileoverview Plugin-wide constants for AudioControl Concert IP control.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
+exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.POWER_VERIFY_ATTEMPTS = exports.POWER_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
 exports.readPluginVersion = readPluginVersion;
 /** Name used to register the plugin with Homebridge (must match package.json name). */
 exports.PLUGIN_NAME = 'homebridge-concert';
@@ -25,7 +25,7 @@ exports.DEFAULT_CONTROL_PORT = 50_000;
 /** Default zone for power commands (Zone 1 / master). */
 exports.DEFAULT_ZONE = 1;
 /** Default polling interval (seconds) for refreshing power state. */
-exports.DEFAULT_REFRESH_RATE_SEC = 30;
+exports.DEFAULT_REFRESH_RATE_SEC = 90;
 /** Minimum allowed polling interval (seconds). */
 exports.MIN_REFRESH_RATE_SEC = 5;
 /**
@@ -40,6 +40,14 @@ exports.MAX_REFRESH_RATE_SEC = 86_400;
  * AudioControl docs say the unit answers within 3 seconds.
  */
 exports.DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
+/**
+ * How long to wait after a missing power-set ack before querying state.
+ * XR units often apply RC5 Power Off without echoing a frame while the amp
+ * transitions; a short settle avoids racing the status query.
+ */
+exports.POWER_SETTLE_MS = 1_500;
+/** How many settle+query attempts after a missing power-set ack. */
+exports.POWER_VERIFY_ATTEMPTS = 2;
 /** Maximum time allowed for establishing a TCP connection. */
 exports.DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 /**

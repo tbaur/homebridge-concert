@@ -236,4 +236,69 @@ describe('ConcertClient', () => {
       0x21, 0x01, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_ON, 0x0d,
     ])
   })
+
+  it('succeeds when power-set times out but a later query confirms standby', async () => {
+    jest.useFakeTimers()
+    let call = 0
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      const index = call++
+      queueMicrotask(() => {
+        socket.emit('connect')
+        if (index >= 1) {
+          queueMicrotask(() => {
+            // Power query: zone in standby
+            socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, 0x00, 0x0d]))
+          })
+        }
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      requestTimeoutMs: 100,
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = client.setPower(false)
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(100) // set timeout
+    await jest.advanceTimersByTimeAsync(1_500) // settle before verify query
+    await expect(pending).resolves.toBeUndefined()
+    expect(createConnection).toHaveBeenCalledTimes(2)
+  })
+
+  it('rethrows when power-set times out and verify query disagrees', async () => {
+    jest.useFakeTimers()
+    let call = 0
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      const index = call++
+      queueMicrotask(() => {
+        socket.emit('connect')
+        if (index >= 1) {
+          queueMicrotask(() => {
+            // Still on — command did not take effect
+            socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+          })
+        }
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      requestTimeoutMs: 100,
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = client.setPower(false)
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(100) // set timeout → verify path
+    await jest.advanceTimersByTimeAsync(1_500) // settle + first disagreeing query
+    await jest.advanceTimersByTimeAsync(1_500) // settle + second disagreeing query
+    await expect(pending).rejects.toBeInstanceOf(ConnectionError)
+    expect(createConnection).toHaveBeenCalledTimes(3)
+  })
 })

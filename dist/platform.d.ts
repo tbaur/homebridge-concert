@@ -14,7 +14,7 @@ import type { ConcertPlatformConfig } from './types';
  */
 export default class ConcertPlatform implements DynamicPlatformPlugin {
     readonly log: Logging;
-    private readonly api;
+    readonly api: API;
     readonly Service: typeof ServiceClass;
     readonly Characteristic: typeof CharacteristicClass;
     readonly accessories: PlatformAccessory[];
@@ -43,6 +43,13 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
      * polling power state.
      */
     private discoverDevices;
+    /**
+     * Sync the accessory display name onto the PlatformAccessory wrapper and the
+     * underlying HAP accessory. Assigning `displayName` alone does not update what
+     * Homebridge serializes / publishes after cache restore — use `updateDisplayName`
+     * when available (Homebridge ≥1.8).
+     */
+    private applyAccessoryDisplayName;
     /** Unregister cached accessories that no longer match the configured target. */
     private removeStaleAccessories;
     private startPolling;
