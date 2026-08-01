@@ -19,6 +19,8 @@ const node_net_1 = __importDefault(require("node:net"));
 const errors_1 = require("../errors");
 const settings_1 = require("../settings");
 const protocol_1 = require("./protocol");
+/** Responses accepted after a power set: RC5 ack, or a following Power status. */
+const POWER_SET_RESPONSE_COMMANDS = [protocol_1.COMMAND_RC5, protocol_1.COMMAND_POWER];
 /**
  * Sends framed automation commands to an AudioControl Concert receiver over TCP.
  */
@@ -45,14 +47,14 @@ class ConcertClient {
         this.assertOk(response, 'power query');
         return (0, protocol_1.isPowerOn)(response.data);
     }
-    /** Power the configured zone on. */
+    /** Power the configured zone on (discrete RC5 Power On). */
     async powerOn() {
-        const response = await this.send((0, protocol_1.buildPowerOn)(this.zone), protocol_1.COMMAND_POWER);
+        const response = await this.send((0, protocol_1.buildPowerOn)(this.zone), POWER_SET_RESPONSE_COMMANDS);
         this.assertOk(response, 'power on');
     }
-    /** Put the configured zone into standby. */
+    /** Put the configured zone into standby (discrete RC5 Power Off). */
     async powerStandby() {
-        const response = await this.send((0, protocol_1.buildPowerStandby)(this.zone), protocol_1.COMMAND_POWER);
+        const response = await this.send((0, protocol_1.buildPowerStandby)(this.zone), POWER_SET_RESPONSE_COMMANDS);
         this.assertOk(response, 'standby');
     }
     /** Set power from a boolean HomeKit On value. */
@@ -72,9 +74,13 @@ class ConcertClient {
     /**
      * Open a TCP connection, write one request frame, and resolve with the first
      * matching response frame. Always closes the socket afterward.
+     *
+     * @param expectedCommands - Accept the first response whose command is in this list
+     *   (RC5 set may reply with 0x08, and often also emits a Power 0x00 status)
      */
-    send(request, expectedCommand) {
+    send(request, expectedCommands) {
         const { host, port, zone } = this;
+        const accepted = Array.isArray(expectedCommands) ? expectedCommands : [expectedCommands];
         this.log.debug?.(`→ ${host}:${port} ${(0, protocol_1.formatFrame)(request)}`);
         return new Promise((resolve, reject) => {
             let settled = false;
@@ -103,7 +109,8 @@ class ConcertClient {
                     reject(new errors_1.ProtocolError('No response from receiver'));
                     return;
                 }
-                this.log.debug?.(`← ${host}:${port} answer=${(0, protocol_1.describeAnswerCode)(response.answerCode)} data=${(0, protocol_1.formatFrame)(response.data)}`);
+                this.log.debug?.(`← ${host}:${port} cmd=0x${response.command.toString(16)} `
+                    + `answer=${(0, protocol_1.describeAnswerCode)(response.answerCode)} data=${(0, protocol_1.formatFrame)(response.data)}`);
                 resolve(response);
             };
             connectTimer = setTimeout(() => {
@@ -115,7 +122,8 @@ class ConcertClient {
                     connectTimer = undefined;
                 }
                 requestTimer = setTimeout(() => {
-                    finish(new errors_1.ConnectionError(`Timed out waiting for response from ${host}:${port}`));
+                    const hint = buffer.length > 0 ? ` (received ${(0, protocol_1.formatFrame)(buffer)})` : '';
+                    finish(new errors_1.ConnectionError(`Timed out waiting for response from ${host}:${port}${hint}`));
                 }, this.requestTimeoutMs);
                 socket.write(request, (writeError) => {
                     if (writeError) {
@@ -142,9 +150,10 @@ class ConcertClient {
                     remaining = remaining.subarray(parsed.consumed);
                     buffer = remaining;
                     const { response } = parsed;
-                    if (response.zone !== zone || response.command !== expectedCommand) {
+                    if (response.zone !== zone || !accepted.includes(response.command)) {
+                        const expected = accepted.map((cmd) => `0x${cmd.toString(16)}`).join('|');
                         this.log.debug?.(`Ignoring unmatched frame zone=${response.zone} cmd=0x${response.command.toString(16)} `
-                            + `(expected zone=${zone} cmd=0x${expectedCommand.toString(16)})`);
+                            + `(expected zone=${zone} cmd=${expected})`);
                         continue;
                     }
                     finish(undefined, response);

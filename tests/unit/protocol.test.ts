@@ -8,11 +8,16 @@
 import {
   ANSWER_OK,
   COMMAND_POWER,
+  COMMAND_RC5,
   FRAME_END,
   FRAME_START,
   POWER_ON,
   POWER_QUERY,
   POWER_STANDBY,
+  RC5_POWER_OFF,
+  RC5_POWER_ON,
+  RC5_SYSTEM_ZONE1,
+  RC5_SYSTEM_ZONE2,
   buildPowerOn,
   buildPowerQuery,
   buildPowerStandby,
@@ -45,9 +50,19 @@ describe('buildRequest', () => {
 })
 
 describe('power helpers', () => {
-  it('builds power on / standby / query frames', () => {
-    expect([...buildPowerOn(1)]).toEqual([0x21, 0x01, 0x00, 0x01, POWER_ON, 0x0d])
-    expect([...buildPowerStandby(1)]).toEqual([0x21, 0x01, 0x00, 0x01, POWER_STANDBY, 0x0d])
+  it('builds RC5 discrete power on / off and Power query frames', () => {
+    expect([...buildPowerOn(1)]).toEqual([
+      0x21, 0x01, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_ON, 0x0d,
+    ])
+    expect([...buildPowerStandby(1)]).toEqual([
+      0x21, 0x01, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_OFF, 0x0d,
+    ])
+    expect([...buildPowerOn(2)]).toEqual([
+      0x21, 0x02, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE2, RC5_POWER_ON, 0x0d,
+    ])
+    expect([...buildPowerStandby(2)]).toEqual([
+      0x21, 0x02, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE2, RC5_POWER_OFF, 0x0d,
+    ])
     expect([...buildPowerQuery(1)]).toEqual([0x21, 0x01, 0x00, 0x01, POWER_QUERY, 0x0d])
   })
 })

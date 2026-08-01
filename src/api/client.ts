@@ -24,6 +24,7 @@ import type { PluginLogger } from '../types'
 import {
   ANSWER_OK,
   COMMAND_POWER,
+  COMMAND_RC5,
   buildPowerOn,
   buildPowerQuery,
   buildPowerStandby,
@@ -33,6 +34,9 @@ import {
   tryParseResponse,
   type ProtocolResponse,
 } from './protocol'
+
+/** Responses accepted after a power set: RC5 ack, or a following Power status. */
+const POWER_SET_RESPONSE_COMMANDS: readonly number[] = [COMMAND_RC5, COMMAND_POWER]
 
 export interface ConcertClientOptions {
   host: string
@@ -74,15 +78,15 @@ export class ConcertClient {
     return isPowerOn(response.data)
   }
 
-  /** Power the configured zone on. */
+  /** Power the configured zone on (discrete RC5 Power On). */
   async powerOn(): Promise<void> {
-    const response = await this.send(buildPowerOn(this.zone), COMMAND_POWER)
+    const response = await this.send(buildPowerOn(this.zone), POWER_SET_RESPONSE_COMMANDS)
     this.assertOk(response, 'power on')
   }
 
-  /** Put the configured zone into standby. */
+  /** Put the configured zone into standby (discrete RC5 Power Off). */
   async powerStandby(): Promise<void> {
-    const response = await this.send(buildPowerStandby(this.zone), COMMAND_POWER)
+    const response = await this.send(buildPowerStandby(this.zone), POWER_SET_RESPONSE_COMMANDS)
     this.assertOk(response, 'standby')
   }
 
@@ -106,9 +110,13 @@ export class ConcertClient {
   /**
    * Open a TCP connection, write one request frame, and resolve with the first
    * matching response frame. Always closes the socket afterward.
+   *
+   * @param expectedCommands - Accept the first response whose command is in this list
+   *   (RC5 set may reply with 0x08, and often also emits a Power 0x00 status)
    */
-  private send(request: Buffer, expectedCommand: number): Promise<ProtocolResponse> {
+  private send(request: Buffer, expectedCommands: number | readonly number[]): Promise<ProtocolResponse> {
     const { host, port, zone } = this
+    const accepted = Array.isArray(expectedCommands) ? expectedCommands : [expectedCommands]
     this.log.debug?.(`→ ${host}:${port} ${formatFrame(request)}`)
 
     return new Promise((resolve, reject) => {
@@ -140,7 +148,10 @@ export class ConcertClient {
           reject(new ProtocolError('No response from receiver'))
           return
         }
-        this.log.debug?.(`← ${host}:${port} answer=${describeAnswerCode(response.answerCode)} data=${formatFrame(response.data)}`)
+        this.log.debug?.(
+          `← ${host}:${port} cmd=0x${response.command.toString(16)} `
+          + `answer=${describeAnswerCode(response.answerCode)} data=${formatFrame(response.data)}`,
+        )
         resolve(response)
       }
 
@@ -154,7 +165,8 @@ export class ConcertClient {
           connectTimer = undefined
         }
         requestTimer = setTimeout(() => {
-          finish(new ConnectionError(`Timed out waiting for response from ${host}:${port}`))
+          const hint = buffer.length > 0 ? ` (received ${formatFrame(buffer)})` : ''
+          finish(new ConnectionError(`Timed out waiting for response from ${host}:${port}${hint}`))
         }, this.requestTimeoutMs)
 
         socket.write(request, (writeError) => {
@@ -187,10 +199,11 @@ export class ConcertClient {
           buffer = remaining
 
           const { response } = parsed
-          if (response.zone !== zone || response.command !== expectedCommand) {
+          if (response.zone !== zone || !accepted.includes(response.command)) {
+            const expected = accepted.map((cmd) => `0x${cmd.toString(16)}`).join('|')
             this.log.debug?.(
               `Ignoring unmatched frame zone=${response.zone} cmd=0x${response.command.toString(16)} `
-              + `(expected zone=${zone} cmd=0x${expectedCommand.toString(16)})`,
+              + `(expected zone=${zone} cmd=${expected})`,
             )
             continue
           }

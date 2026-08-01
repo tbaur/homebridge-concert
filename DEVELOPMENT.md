@@ -57,6 +57,8 @@ npm run test:unit      # unit tests only
 
 ## Adding new capabilities
 
+Power *query* uses command `0x00` / data `0xF0`. Power *set* uses Simulate RC5 (`0x08`) with discrete Power On (`0x7B`) / Power Off (`0x7C`).
+
 The plugin currently exposes power on/standby for one configured zone. To add volume, source, or other X/XR commands:
 
 1. Add frame builders in `src/api/protocol.ts` (and parse response data as needed).
