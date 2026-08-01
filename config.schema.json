@@ -1,0 +1,68 @@
+{
+  "pluginAlias": "Concert",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Homebridge plugin for AudioControl Concert XR receivers. Powers the unit on/off over the LAN IP control port (default 50000). On the receiver, set **Control** to **IP** and **Standby Mode** to **IP and HDMI ON** so the unit remains reachable while in standby.",
+  "footerDisplay": "For help, see the [README](https://github.com/tbaur/homebridge-concert#readme).",
+  "schema": {
+    "type": "object",
+    "required": ["name", "host"],
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Concert",
+        "description": "Plugin instance name shown in the Homebridge log."
+      },
+      "host": {
+        "title": "Host / IP Address",
+        "type": "string",
+        "placeholder": "192.168.1.50",
+        "description": "IP address or hostname of the AudioControl Concert receiver. Prefer a static/DHCP reservation."
+      },
+      "port": {
+        "title": "Control Port",
+        "type": "integer",
+        "default": 50000,
+        "minimum": 1,
+        "maximum": 65535,
+        "description": "TCP port for IP automation control. Default is 50000."
+      },
+      "accessoryName": {
+        "title": "Accessory Name",
+        "type": "string",
+        "placeholder": "Theater AVR",
+        "description": "Optional HomeKit display name for the power switch. Defaults to the platform name."
+      },
+      "zone": {
+        "title": "Zone",
+        "type": "integer",
+        "default": 1,
+        "oneOf": [
+          { "title": "Zone 1 (Main)", "enum": [1] },
+          { "title": "Zone 2", "enum": [2] }
+        ],
+        "description": "Which zone to power. Zone 1 is the main/master zone."
+      },
+      "model": {
+        "title": "Model",
+        "type": "string",
+        "default": "Concert XR-8S",
+        "description": "Optional model name shown in HomeKit Accessory Information."
+      },
+      "options": {
+        "type": "object",
+        "properties": {
+          "refreshRate": {
+            "title": "Refresh Rate (seconds)",
+            "type": "integer",
+            "default": 30,
+            "minimum": 5,
+            "maximum": 86400,
+            "description": "How often to poll the receiver for power state. Minimum 5 seconds, maximum 86400 (24 hours)."
+          }
+        }
+      }
+    }
+  }
+}

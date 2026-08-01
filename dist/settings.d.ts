@@ -1,0 +1,54 @@
+/**
+ * Copyright (c) 2026 tbaur
+ *
+ * Licensed under the Apache License, Version 2.0
+ * See LICENSE file for full license text
+ *
+ * @fileoverview Plugin-wide constants for AudioControl Concert IP control.
+ */
+/** Name used to register the plugin with Homebridge (must match package.json name). */
+export declare const PLUGIN_NAME = "homebridge-concert";
+/** Platform identifier referenced in the user's Homebridge config. */
+export declare const PLATFORM_NAME = "Concert";
+/** Prefix used when generating stable HAP accessory UUIDs. */
+export declare const UUID_PREFIX = "concert-";
+/**
+ * Default TCP port for AudioControl X/XR series IP automation control.
+ *
+ * @see AudioControl X/XR Series user manual — Automation Integration
+ */
+export declare const DEFAULT_CONTROL_PORT = 50000;
+/** Default zone for power commands (Zone 1 / master). */
+export declare const DEFAULT_ZONE = 1;
+/** Default polling interval (seconds) for refreshing power state. */
+export declare const DEFAULT_REFRESH_RATE_SEC = 30;
+/** Minimum allowed polling interval (seconds). */
+export declare const MIN_REFRESH_RATE_SEC = 5;
+/**
+ * Maximum allowed polling interval (seconds).
+ *
+ * Values above this are clamped. Node collapses `setInterval` delays larger than
+ * `2^31 - 1` ms to 1 ms, so an unbounded refreshRate can become a poll storm.
+ */
+export declare const MAX_REFRESH_RATE_SEC = 86400;
+/**
+ * How long to wait for a command response before failing the request.
+ * AudioControl docs say the unit answers within 3 seconds.
+ */
+export declare const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
+/** Maximum time allowed for establishing a TCP connection. */
+export declare const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+/**
+ * Cap on how many bytes a single TCP response may buffer before we abort.
+ * Power frames are a handful of bytes; this guards against a misbehaving peer.
+ */
+export declare const MAX_RESPONSE_BUFFER_BYTES = 4096;
+/**
+ * Installed plugin version, used for HomeKit Accessory Information.
+ *
+ * Resolved via `require` rather than a static `import`: `package.json` lives
+ * outside the TypeScript `rootDir` (`src/`), so importing it would alter the
+ * emitted `dist/` layout.
+ */
+export declare function readPluginVersion(): string;
+//# sourceMappingURL=settings.d.ts.map

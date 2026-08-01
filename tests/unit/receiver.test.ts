@@ -1,0 +1,193 @@
+/**
+ * Copyright (c) 2026 tbaur
+ *
+ * Licensed under the Apache License, Version 2.0
+ * See LICENSE file for full license text
+ */
+
+import type { PlatformAccessory } from 'homebridge'
+
+import { ReceiverAccessory } from '../../src/devices/receiver'
+import type { ConcertClient } from '../../src/api'
+import type ConcertPlatform from '../../src/platform'
+
+function createPlatform() {
+  const onChar = {
+    onGet: jest.fn().mockReturnThis(),
+    onSet: jest.fn().mockReturnThis(),
+  }
+  const switchService = {
+    setCharacteristic: jest.fn().mockReturnThis(),
+    getCharacteristic: jest.fn().mockReturnValue(onChar),
+    updateCharacteristic: jest.fn(),
+  }
+  const infoService = {
+    setCharacteristic: jest.fn().mockReturnThis(),
+  }
+
+  const platform = {
+    Service: {
+      Switch: 'Switch',
+      AccessoryInformation: 'AccessoryInformation',
+    },
+    Characteristic: {
+      On: 'On',
+      Manufacturer: 'Manufacturer',
+      Model: 'Model',
+      SerialNumber: 'SerialNumber',
+      FirmwareRevision: 'FirmwareRevision',
+      Name: 'Name',
+    },
+    log: {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    },
+  } as unknown as ConcertPlatform
+
+  const accessory = {
+    displayName: 'XR-8S',
+    context: {
+      host: '192.168.1.50',
+      port: 50_000,
+      zone: 1,
+      model: 'Concert XR-8S',
+    },
+    getService: jest.fn((service: string) => {
+      if (service === 'AccessoryInformation') {
+        return infoService
+      }
+      if (service === 'Switch') {
+        return switchService
+      }
+      return undefined
+    }),
+    addService: jest.fn(),
+  } as unknown as PlatformAccessory
+
+  return { platform, accessory, switchService, onChar, infoService }
+}
+
+describe('ReceiverAccessory', () => {
+  it('sets power on and updates local state', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    const client = {
+      setPower: jest.fn().mockResolvedValue(undefined),
+      getPowerState: jest.fn(),
+    } as unknown as ConcertClient
+
+    new ReceiverAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    await setHandler(true)
+
+    expect(client.setPower).toHaveBeenCalledWith(true)
+    expect(platform.log.info).toHaveBeenCalledWith(expect.stringContaining('on'))
+  })
+
+  it('sets FirmwareRevision from the package version', () => {
+    const { platform, accessory, infoService } = createPlatform()
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn(),
+    } as unknown as ConcertClient
+
+    new ReceiverAccessory(platform, accessory, client)
+    expect(infoService.setCharacteristic).toHaveBeenCalledWith('FirmwareRevision', expect.stringMatching(/^\d+\.\d+\.\d+/))
+  })
+
+  it('reverts the characteristic when setPower fails', async () => {
+    const { platform, accessory, onChar, switchService } = createPlatform()
+    const client = {
+      setPower: jest.fn().mockRejectedValue(new Error('offline')),
+      getPowerState: jest.fn(),
+    } as unknown as ConcertClient
+
+    new ReceiverAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+
+    await expect(setHandler(true)).rejects.toThrow('offline')
+    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', false)
+  })
+
+  it('polls power state into HomeKit', async () => {
+    const { platform, accessory, switchService } = createPlatform()
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn().mockResolvedValue(true),
+    } as unknown as ConcertClient
+
+    const handler = new ReceiverAccessory(platform, accessory, client)
+    await handler.refresh()
+
+    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
+  })
+
+  it('warns once on poll failure then demotes to debug', async () => {
+    const { platform, accessory } = createPlatform()
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn().mockRejectedValue(new Error('timeout')),
+    } as unknown as ConcertClient
+
+    const handler = new ReceiverAccessory(platform, accessory, client)
+    await handler.refresh()
+    await handler.refresh()
+
+    expect(platform.log.warn).toHaveBeenCalledTimes(1)
+    expect(platform.log.debug).toHaveBeenCalled()
+  })
+
+  it('discards a stale poll that finishes after a set', async () => {
+    const { platform, accessory, onChar, switchService } = createPlatform()
+    let resolvePoll: ((value: boolean) => void) | undefined
+    const client = {
+      setPower: jest.fn().mockResolvedValue(undefined),
+      getPowerState: jest.fn().mockImplementation(() => new Promise<boolean>((resolve) => {
+        resolvePoll = resolve
+      })),
+    } as unknown as ConcertClient
+
+    const handler = new ReceiverAccessory(platform, accessory, client)
+    const pendingRefresh = handler.refresh()
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    await setHandler(true)
+    resolvePoll?.(false)
+    await pendingRefresh
+
+    // Set won: On should remain true; the late poll must not force Off.
+    expect(switchService.updateCharacteristic).not.toHaveBeenCalledWith('On', false)
+    const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
+    expect(getHandler()).toBe(true)
+  })
+
+  it('returns the cached On value from get', () => {
+    const { platform, accessory, onChar } = createPlatform()
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn(),
+    } as unknown as ConcertClient
+
+    new ReceiverAccessory(platform, accessory, client)
+    const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
+    expect(getHandler()).toBe(false)
+  })
+
+  it('single-flights concurrent refresh calls', async () => {
+    const { platform, accessory } = createPlatform()
+    let resolvePoll: ((value: boolean) => void) | undefined
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn().mockImplementation(() => new Promise<boolean>((resolve) => {
+        resolvePoll = resolve
+      })),
+    } as unknown as ConcertClient
+
+    const handler = new ReceiverAccessory(platform, accessory, client)
+    const first = handler.refresh()
+    const second = handler.refresh()
+    expect(client.getPowerState).toHaveBeenCalledTimes(1)
+    resolvePoll?.(true)
+    await Promise.all([first, second])
+  })
+})

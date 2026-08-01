@@ -1,0 +1,104 @@
+# Contributing to homebridge-concert
+
+Thank you for your interest in contributing! This guide will help you get started.
+
+## Getting Started
+
+You need **Node.js 20 or newer** (the version range the plugin declares in `engines`). CI runs the test suite on Node 20, 22, and 24, so anything you land must pass on all three.
+
+1. Fork the repository
+2. Clone your fork:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/homebridge-concert.git
+   cd homebridge-concert
+   ```
+3. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+## Development Workflow
+
+### Running Tests
+
+```bash
+npm test              # Run all tests with coverage
+npm run lint          # Check code style
+npm run lint:fix      # Auto-fix style issues
+```
+
+### Code Style
+
+- Use `const`/`let`, never `var`
+- Use async/await over raw Promises
+- Add JSDoc comments for public functions
+- Follow existing code patterns
+
+### Making Changes
+
+1. Create a feature branch:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+2. Make your changes
+3. Add/update tests
+4. Ensure all tests pass: `npm test` (coverage must stay >= 80%)
+5. Ensure linting passes: `npm run lint`
+6. Commit with a descriptive message
+
+### Commit Messages
+
+Follow [Conventional Commits](https://www.conventionalcommits.org). PR titles drive automated releases via release-please, so use prefixes like:
+
+- `feat:` - New feature
+- `fix:` - Bug fix
+- `docs:` - Documentation only
+- `test:` - Test changes
+- `refactor:` - Code refactoring
+
+Example: `feat: add volume control for zone 1`
+
+## Pull Request Process
+
+1. Update documentation if needed
+2. Ensure CI passes (tests, linting)
+3. Request review from maintainers
+
+> `CHANGELOG.md` is generated automatically by release-please from your
+> Conventional Commit / PR titles — do not edit it by hand. See [RELEASING.md](RELEASING.md).
+
+### PR Checklist
+
+- [ ] Tests added/updated
+- [ ] Linting passes
+- [ ] Documentation updated
+- [ ] Descriptive PR title (Conventional Commits)
+
+## Adding Device Support
+
+See [DEVELOPMENT.md](DEVELOPMENT.md#adding-new-capabilities) for details on extending control beyond power.
+
+## Reporting Bugs
+
+Use the GitHub issue template. Include:
+- Homebridge version
+- Plugin version
+- Node.js version
+- Steps to reproduce
+- Expected vs actual behavior
+- Relevant logs
+
+## Feature Requests
+
+Open an issue with:
+- Clear description of the feature
+- Use case / why it's needed
+- Any implementation ideas
+
+## Questions?
+
+Open a discussion on GitHub or check existing issues.
+
+---
+
+Thank you for contributing! 🎉
