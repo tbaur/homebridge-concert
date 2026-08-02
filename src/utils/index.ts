@@ -6,7 +6,9 @@
  */
 
 export {
+  accessoryIdentityKey,
   isValidHost,
+  resolveAccessories,
   resolvePort,
   resolveRefreshRateSec,
   resolveZone,

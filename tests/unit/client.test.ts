@@ -13,6 +13,7 @@ import { ConnectionError, ProtocolError } from '../../src/errors'
 import {
   ANSWER_OK,
   COMMAND_RC5,
+  COMMAND_VOLUME,
   POWER_ON,
   RC5_POWER_OFF,
   RC5_POWER_ON,
@@ -343,5 +344,87 @@ describe('ConcertClient', () => {
     await jest.advanceTimersByTimeAsync(1_500) // settle + second disagreeing query
     await expect(pending).rejects.toBeInstanceOf(ConnectionError)
     expect(createConnection).toHaveBeenCalledTimes(3)
+  })
+
+  it('queries and sets volume over short-lived TCP connections', async () => {
+    const replies = [
+      Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 57, 0x0d]),
+      Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 57, 0x0d]),
+    ]
+    let call = 0
+    const written: Buffer[] = []
+
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => {
+        socket.emit('connect')
+        queueMicrotask(() => {
+          written.push(...socket.written)
+          socket.emit('data', replies[call++])
+        })
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.getVolume(1)).resolves.toBe(57)
+    await expect(client.setVolume(57, 1)).resolves.toBeUndefined()
+    expect([...written[0]]).toEqual([0x21, 0x01, COMMAND_VOLUME, 0x01, 0xf0, 0x0d])
+    expect([...written[1]]).toEqual([0x21, 0x01, COMMAND_VOLUME, 0x01, 57, 0x0d])
+  })
+
+  it('single-flights concurrent getVolume calls for the same zone', async () => {
+    const socket = new FakeSocket()
+    const createConnection = jest.fn(() => {
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const first = client.getVolume(1)
+    const second = client.getVolume(1)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(createConnection).toHaveBeenCalledTimes(1)
+    socket.emit('data', Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 40, 0x0d]))
+    await expect(Promise.all([first, second])).resolves.toEqual([40, 40])
+  })
+
+  it('succeeds when volume-set times out but a later query confirms the level', async () => {
+    jest.useFakeTimers()
+    let call = 0
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      const index = call++
+      queueMicrotask(() => {
+        socket.emit('connect')
+        if (index >= 1) {
+          queueMicrotask(() => {
+            socket.emit('data', Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 57, 0x0d]))
+          })
+        }
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      requestTimeoutMs: 100,
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = client.setVolume(57, 1)
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(100)
+    await jest.advanceTimersByTimeAsync(1_500)
+    await expect(pending).resolves.toBeUndefined()
+    expect(createConnection).toHaveBeenCalledTimes(2)
   })
 })

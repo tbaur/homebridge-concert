@@ -27,58 +27,72 @@ const POWER_SET_RESPONSE_COMMANDS = [protocol_1.COMMAND_RC5, protocol_1.COMMAND_
 class ConcertClient {
     host;
     port;
-    zone;
+    defaultZone;
     connectTimeoutMs;
     requestTimeoutMs;
     log;
     createConnection;
+    /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
+    volumeQueryInFlight = new Map();
     constructor(options) {
         this.host = options.host;
         this.port = options.port ?? settings_1.DEFAULT_CONTROL_PORT;
-        this.zone = options.zone ?? settings_1.DEFAULT_ZONE;
+        this.defaultZone = options.zone ?? settings_1.DEFAULT_ZONE;
         this.connectTimeoutMs = options.connectTimeoutMs ?? settings_1.DEFAULT_CONNECT_TIMEOUT_MS;
         this.requestTimeoutMs = options.requestTimeoutMs ?? settings_1.DEFAULT_REQUEST_TIMEOUT_MS;
         this.log = options.logger ?? {};
         this.createConnection = options.createConnection ?? node_net_1.default.createConnection;
     }
+    resolveZone(zone) {
+        return zone === 1 || zone === 2 ? zone : this.defaultZone;
+    }
     /**
-     * Query whether the configured zone is powered on.
-     *
-     * Retries once on ConnectionError — XR units sometimes accept TCP then
-     * stay silent for a single request before answering normally.
+     * Retry a ConnectionError once — XR units sometimes accept TCP then stay
+     * silent for a single request before answering normally.
      */
-    async getPowerState() {
+    async withQueryRetry(operation, run) {
         const attempts = 1 + settings_1.POWER_QUERY_RETRIES;
         let lastError;
         for (let attempt = 1; attempt <= attempts; attempt++) {
             try {
-                return await this.queryPowerOnce();
+                return await run();
             }
             catch (error) {
                 lastError = error;
                 if (!(error instanceof errors_1.ConnectionError) || attempt >= attempts) {
                     throw error;
                 }
-                this.log.debug?.(`Power query failed (${error.message}); retrying `
+                this.log.debug?.(`${operation} failed (${error.message}); retrying `
                     + `(${attempt}/${settings_1.POWER_QUERY_RETRIES})`);
                 await sleep(settings_1.POWER_QUERY_RETRY_MS);
             }
         }
         throw lastError;
     }
-    async queryPowerOnce() {
-        const response = await this.send((0, protocol_1.buildPowerQuery)(this.zone), protocol_1.COMMAND_POWER);
-        this.assertOk(response, 'power query');
-        return (0, protocol_1.isPowerOn)(response.data);
+    /**
+     * Query whether the zone is powered on.
+     *
+     * Retries once on ConnectionError — XR units sometimes accept TCP then
+     * stay silent for a single request before answering normally.
+     */
+    async getPowerState(zone) {
+        const resolvedZone = this.resolveZone(zone);
+        return this.withQueryRetry('Power query', async () => {
+            const response = await this.send((0, protocol_1.buildPowerQuery)(resolvedZone), protocol_1.COMMAND_POWER, resolvedZone);
+            this.assertOk(response, 'power query');
+            return (0, protocol_1.isPowerOn)(response.data);
+        });
     }
-    /** Power the configured zone on (discrete RC5 Power On). */
-    async powerOn() {
-        const response = await this.send((0, protocol_1.buildPowerOn)(this.zone), POWER_SET_RESPONSE_COMMANDS);
+    /** Power the zone on (discrete RC5 Power On). */
+    async powerOn(zone) {
+        const resolvedZone = this.resolveZone(zone);
+        const response = await this.send((0, protocol_1.buildPowerOn)(resolvedZone), POWER_SET_RESPONSE_COMMANDS, resolvedZone);
         this.assertOk(response, 'power on');
     }
-    /** Put the configured zone into standby (discrete RC5 Power Off). */
-    async powerStandby() {
-        const response = await this.send((0, protocol_1.buildPowerStandby)(this.zone), POWER_SET_RESPONSE_COMMANDS);
+    /** Put the zone into standby (discrete RC5 Power Off). */
+    async powerStandby(zone) {
+        const resolvedZone = this.resolveZone(zone);
+        const response = await this.send((0, protocol_1.buildPowerStandby)(resolvedZone), POWER_SET_RESPONSE_COMMANDS, resolvedZone);
         this.assertOk(response, 'standby');
     }
     /**
@@ -88,13 +102,14 @@ class ConcertClient {
      * stays open until our timeout). When the ack is missing, settle briefly and
      * confirm via Power query before failing the HomeKit write.
      */
-    async setPower(on) {
+    async setPower(on, zone) {
+        const resolvedZone = this.resolveZone(zone);
         try {
             if (on) {
-                await this.powerOn();
+                await this.powerOn(resolvedZone);
             }
             else {
-                await this.powerStandby();
+                await this.powerStandby(resolvedZone);
             }
         }
         catch (error) {
@@ -102,18 +117,64 @@ class ConcertClient {
                 throw error;
             }
             this.log.debug?.(`Power ${on ? 'on' : 'standby'} ack missing (${error.message}); verifying state`);
-            if (await this.verifyPowerState(on)) {
+            if (await this.verifyPowerState(on, resolvedZone)) {
+                return;
+            }
+            throw error;
+        }
+    }
+    /**
+     * Query the absolute volume level (0–99) for the zone.
+     *
+     * Concurrent callers for the same zone share one in-flight query so a poll
+     * tick with multiple volume-preset accessories does not open N sockets.
+     * Retries once on ConnectionError (same as power query).
+     */
+    async getVolume(zone) {
+        const resolvedZone = this.resolveZone(zone);
+        const existing = this.volumeQueryInFlight.get(resolvedZone);
+        if (existing) {
+            return existing;
+        }
+        const pending = this.withQueryRetry('Volume query', async () => {
+            const response = await this.send((0, protocol_1.buildVolumeQuery)(resolvedZone), protocol_1.COMMAND_VOLUME, resolvedZone);
+            this.assertOk(response, 'volume query');
+            return (0, protocol_1.parseVolume)(response.data);
+        }).finally(() => {
+            this.volumeQueryInFlight.delete(resolvedZone);
+        });
+        this.volumeQueryInFlight.set(resolvedZone, pending);
+        return pending;
+    }
+    /**
+     * Set the absolute volume level (0–99) for the zone.
+     *
+     * When the set ack is missing (ConnectionError), settle and confirm via
+     * volume query before failing — matching power-set resilience.
+     */
+    async setVolume(level, zone) {
+        const resolvedZone = this.resolveZone(zone);
+        try {
+            const response = await this.send((0, protocol_1.buildVolumeSet)(resolvedZone, level), protocol_1.COMMAND_VOLUME, resolvedZone);
+            this.assertOk(response, 'volume set');
+        }
+        catch (error) {
+            if (!(error instanceof errors_1.ConnectionError)) {
+                throw error;
+            }
+            this.log.debug?.(`Volume set ack missing (${error.message}); verifying level ${level}`);
+            if (await this.verifyVolumeLevel(level, resolvedZone)) {
                 return;
             }
             throw error;
         }
     }
     /** True when a power query reports the desired on/off state. */
-    async verifyPowerState(expectedOn) {
+    async verifyPowerState(expectedOn, zone) {
         for (let attempt = 0; attempt < settings_1.POWER_VERIFY_ATTEMPTS; attempt++) {
             await sleep(settings_1.POWER_SETTLE_MS);
             try {
-                const actual = await this.getPowerState();
+                const actual = await this.getPowerState(zone);
                 if (actual === expectedOn) {
                     this.log.debug?.(`Power state verified as ${expectedOn ? 'on' : 'standby'} after missing ack`);
                     return true;
@@ -122,6 +183,24 @@ class ConcertClient {
             catch (verifyError) {
                 const message = verifyError instanceof Error ? verifyError.message : String(verifyError);
                 this.log.debug?.(`Power verify attempt ${attempt + 1} failed: ${message}`);
+            }
+        }
+        return false;
+    }
+    /** True when a volume query reports the desired level. */
+    async verifyVolumeLevel(expectedLevel, zone) {
+        for (let attempt = 0; attempt < settings_1.POWER_VERIFY_ATTEMPTS; attempt++) {
+            await sleep(settings_1.POWER_SETTLE_MS);
+            try {
+                const actual = await this.getVolume(zone);
+                if (actual === expectedLevel) {
+                    this.log.debug?.(`Volume verified as ${expectedLevel} after missing ack`);
+                    return true;
+                }
+            }
+            catch (verifyError) {
+                const message = verifyError instanceof Error ? verifyError.message : String(verifyError);
+                this.log.debug?.(`Volume verify attempt ${attempt + 1} failed: ${message}`);
             }
         }
         return false;
@@ -137,9 +216,10 @@ class ConcertClient {
      *
      * @param expectedCommands - Accept the first response whose command is in this list
      *   (RC5 set may reply with 0x08, and often also emits a Power 0x00 status)
+     * @param zone - Zone expected on matching response frames
      */
-    send(request, expectedCommands) {
-        const { host, port, zone } = this;
+    send(request, expectedCommands, zone) {
+        const { host, port } = this;
         const accepted = Array.isArray(expectedCommands) ? expectedCommands : [expectedCommands];
         this.log.debug?.(`→ ${host}:${port} ${(0, protocol_1.formatFrame)(request)}`);
         return new Promise((resolve, reject) => {

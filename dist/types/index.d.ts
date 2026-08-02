@@ -17,6 +17,22 @@ export interface PluginLogger {
     warn?: (message: string) => void;
     error?: (message: string) => void;
 }
+/** Supported HomeKit accessory kinds exposed by this platform. */
+export type AccessoryKind = 'power' | 'volumePreset';
+/** One entry in the platform `accessories` array. */
+export interface ConcertAccessoryConfig {
+    /** HomeKit accessory kind. */
+    type: AccessoryKind;
+    /** HomeKit display name. */
+    name: string;
+    /** Zone number (1 = master, 2 = zone 2). Defaults to 1. */
+    zone?: number;
+    /**
+     * Target volume level (0–99) for `volumePreset` accessories.
+     * Required when `type` is `volumePreset`; ignored for `power`.
+     */
+    volume?: number;
+}
 /**
  * The full plugin configuration block as it appears in the Homebridge
  * `config.json` platforms array.
@@ -26,22 +42,35 @@ export interface ConcertPlatformConfig extends PlatformConfig {
     host: string;
     /** TCP control port. Defaults to 50000. */
     port?: number;
-    /** Display name for the HomeKit accessory. */
-    accessoryName?: string;
-    /** Zone number (1 = master, 2 = zone 2). Defaults to 1. */
-    zone?: number;
     /** Model string shown in Accessory Information. */
     model?: string;
+    /** HomeKit switches to expose for this receiver. */
+    accessories: ConcertAccessoryConfig[];
     options?: {
-        /** Polling interval in seconds for power state. */
+        /** Polling interval in seconds for accessory state. */
         refreshRate?: number;
     };
 }
-/** Persisted accessory context for a configured receiver. */
-export interface ReceiverContext {
+/** A validated accessory ready for UUID generation and handler construction. */
+export interface ResolvedAccessory {
+    kind: AccessoryKind;
+    name: string;
+    zone: number;
+    /** Present when `kind` is `volumePreset`. */
+    volume?: number;
+}
+/** Persisted accessory context for a configured receiver switch. */
+export interface AccessoryContext {
+    kind: AccessoryKind;
     host: string;
     port: number;
     zone: number;
     model: string;
+    /** Present when `kind` is `volumePreset`. */
+    volume?: number;
+}
+/** Common surface for platform-polled accessory handlers. */
+export interface RefreshableAccessory {
+    refresh(): Promise<void>;
 }
 //# sourceMappingURL=index.d.ts.map

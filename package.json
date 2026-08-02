@@ -2,7 +2,7 @@
   "name": "homebridge-concert",
   "displayName": "Homebridge Concert",
   "version": "0.1.4",
-  "description": "A Homebridge plugin for AudioControl Concert XR receivers",
+  "description": "Homebridge plugin for AudioControl Concert XR receivers — power/standby and volume-preset HomeKit switches over LAN IP control",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "keywords": [
@@ -73,7 +73,9 @@
   "files": [
     "dist/**/*",
     "config.schema.json",
+    "docs/**/*",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "DEVELOPMENT.md"
   ]
 }

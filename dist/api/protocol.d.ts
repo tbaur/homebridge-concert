@@ -16,14 +16,19 @@
  * RC5 IR (0x08) with discrete Power On / Power Off codes — X/XR units treat
  * Power (0x00) as query-oriented and may not answer a direct set.
  *
+ * Volume uses command 0x0D with data 0x00–0x63 (0–99) to set, or 0xF0 to query.
+ *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
+import { MAX_VOLUME, MIN_VOLUME } from '../settings';
 /** Start-of-frame byte (`!`). */
 export declare const FRAME_START = 33;
 /** End-of-frame byte (carriage return). */
 export declare const FRAME_END = 13;
 /** Power / standby status command code (query + status responses). */
 export declare const COMMAND_POWER = 0;
+/** Absolute volume set / query command code. */
+export declare const COMMAND_VOLUME = 13;
 /** Simulate RC5 IR command (used for discrete power on/off). */
 export declare const COMMAND_RC5 = 8;
 /** Enter standby (status / legacy set data byte). */
@@ -32,6 +37,10 @@ export declare const POWER_STANDBY = 0;
 export declare const POWER_ON = 1;
 /** Request current power state (query sentinel). */
 export declare const POWER_QUERY = 240;
+/** Request current volume (query sentinel). */
+export declare const VOLUME_QUERY = 240;
+/** Re-export volume bounds for protocol callers (single source: settings). */
+export { MIN_VOLUME, MAX_VOLUME };
 /** RC5 system code for Zone 1 advanced / discrete functions. */
 export declare const RC5_SYSTEM_ZONE1 = 16;
 /** RC5 system code for Zone 2. */
@@ -78,6 +87,15 @@ export declare function buildPowerOn(zone: number): Buffer;
 export declare function buildPowerStandby(zone: number): Buffer;
 /** Build a power-state query for the given zone. */
 export declare function buildPowerQuery(zone: number): Buffer;
+/** Build a volume-state query for the given zone. */
+export declare function buildVolumeQuery(zone: number): Buffer;
+/**
+ * Build an absolute volume set for the given zone.
+ *
+ * @param zone - Zone number (1 or 2)
+ * @param level - Volume 0–99 (`0x00`–`0x63`)
+ */
+export declare function buildVolumeSet(zone: number, level: number): Buffer;
 /**
  * Extract the first complete response frame from a buffer, if present.
  *
@@ -97,6 +115,12 @@ export declare function describeAnswerCode(answerCode: number): string;
  * @throws {ProtocolError} when the payload is empty or not a known power state
  */
 export declare function isPowerOn(data: Buffer): boolean;
+/**
+ * Interpret a volume-command response data byte as a level 0–99.
+ *
+ * @throws {ProtocolError} when the payload is empty or out of range
+ */
+export declare function parseVolume(data: Buffer): number;
 /** Hex dump of a frame for debug logging (no newlines). */
 export declare function formatFrame(frame: Buffer): string;
 //# sourceMappingURL=protocol.d.ts.map

@@ -9,6 +9,7 @@ import {
   ANSWER_OK,
   COMMAND_POWER,
   COMMAND_RC5,
+  COMMAND_VOLUME,
   FRAME_END,
   FRAME_START,
   POWER_ON,
@@ -18,13 +19,17 @@ import {
   RC5_POWER_ON,
   RC5_SYSTEM_ZONE1,
   RC5_SYSTEM_ZONE2,
+  VOLUME_QUERY,
   buildPowerOn,
   buildPowerQuery,
   buildPowerStandby,
   buildRequest,
+  buildVolumeQuery,
+  buildVolumeSet,
   describeAnswerCode,
   formatFrame,
   isPowerOn,
+  parseVolume,
   tryParseResponse,
 } from '../../src/api/protocol'
 
@@ -101,6 +106,28 @@ describe('tryParseResponse', () => {
     const parsed = tryParseResponse(raw)
     expect(parsed!.response.data[0]).toBe(POWER_ON)
     expect(parsed!.consumed).toBe(14)
+  })
+})
+
+describe('volume helpers', () => {
+  it('builds volume query and set frames', () => {
+    expect([...buildVolumeQuery(1)]).toEqual([
+      0x21, 0x01, COMMAND_VOLUME, 0x01, VOLUME_QUERY, 0x0d,
+    ])
+    expect([...buildVolumeSet(1, 57)]).toEqual([
+      0x21, 0x01, COMMAND_VOLUME, 0x01, 57, 0x0d,
+    ])
+  })
+
+  it('rejects out-of-range volume levels', () => {
+    expect(() => buildVolumeSet(1, -1)).toThrow(RangeError)
+    expect(() => buildVolumeSet(1, 100)).toThrow(RangeError)
+  })
+
+  it('parses volume response data', () => {
+    expect(parseVolume(Buffer.from([57]))).toBe(57)
+    expect(() => parseVolume(Buffer.alloc(0))).toThrow(/empty/)
+    expect(() => parseVolume(Buffer.from([0x64]))).toThrow(/Unexpected volume/)
   })
 })
 

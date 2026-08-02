@@ -16,10 +16,13 @@
  * RC5 IR (0x08) with discrete Power On / Power Off codes — X/XR units treat
  * Power (0x00) as query-oriented and may not answer a direct set.
  *
+ * Volume uses command 0x0D with data 0x00–0x63 (0–99) to set, or 0xF0 to query.
+ *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
 
 import { ProtocolError } from '../errors'
+import { MAX_VOLUME, MIN_VOLUME } from '../settings'
 
 /** Start-of-frame byte (`!`). */
 export const FRAME_START = 0x21
@@ -29,6 +32,9 @@ export const FRAME_END = 0x0D
 
 /** Power / standby status command code (query + status responses). */
 export const COMMAND_POWER = 0x00
+
+/** Absolute volume set / query command code. */
+export const COMMAND_VOLUME = 0x0D
 
 /** Simulate RC5 IR command (used for discrete power on/off). */
 export const COMMAND_RC5 = 0x08
@@ -41,6 +47,12 @@ export const POWER_ON = 0x01
 
 /** Request current power state (query sentinel). */
 export const POWER_QUERY = 0xF0
+
+/** Request current volume (query sentinel). */
+export const VOLUME_QUERY = 0xF0
+
+/** Re-export volume bounds for protocol callers (single source: settings). */
+export { MIN_VOLUME, MAX_VOLUME }
 
 /** RC5 system code for Zone 1 advanced / discrete functions. */
 export const RC5_SYSTEM_ZONE1 = 0x10
@@ -146,6 +158,24 @@ export function buildPowerQuery(zone: number): Buffer {
   return buildRequest(zone, COMMAND_POWER, Buffer.from([POWER_QUERY]))
 }
 
+/** Build a volume-state query for the given zone. */
+export function buildVolumeQuery(zone: number): Buffer {
+  return buildRequest(zone, COMMAND_VOLUME, Buffer.from([VOLUME_QUERY]))
+}
+
+/**
+ * Build an absolute volume set for the given zone.
+ *
+ * @param zone - Zone number (1 or 2)
+ * @param level - Volume 0–99 (`0x00`–`0x63`)
+ */
+export function buildVolumeSet(zone: number, level: number): Buffer {
+  if (!Number.isInteger(level) || level < MIN_VOLUME || level > MAX_VOLUME) {
+    throw new RangeError(`Volume must be an integer ${MIN_VOLUME}–${MAX_VOLUME}, got ${level}`)
+  }
+  return buildRequest(zone, COMMAND_VOLUME, Buffer.from([level]))
+}
+
 /**
  * Extract the first complete response frame from a buffer, if present.
  *
@@ -221,6 +251,22 @@ export function isPowerOn(data: Buffer): boolean {
     return false
   }
   throw new ProtocolError(`Unexpected power state byte 0x${data[0].toString(16)}`)
+}
+
+/**
+ * Interpret a volume-command response data byte as a level 0–99.
+ *
+ * @throws {ProtocolError} when the payload is empty or out of range
+ */
+export function parseVolume(data: Buffer): number {
+  if (data.length < 1) {
+    throw new ProtocolError('Volume response data is empty')
+  }
+  const level = data[0]
+  if (level < MIN_VOLUME || level > MAX_VOLUME) {
+    throw new ProtocolError(`Unexpected volume byte 0x${level.toString(16)}`)
+  }
+  return level
 }
 
 /** Hex dump of a frame for debug logging (no newlines). */

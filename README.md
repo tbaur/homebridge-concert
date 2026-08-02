@@ -7,21 +7,23 @@
 [![Homebridge](https://img.shields.io/badge/homebridge-%3E%3D1.6.0%20%7C%7C%202.x-purple)](https://homebridge.io)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Control power on your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple HomeKit through Homebridge.
+Control your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple HomeKit through Homebridge — power/standby and volume presets as HomeKit Switches.
 
 ## Features
 
 ### Device Support
-- **Power Switch** — HomeKit Switch that powers the receiver on or puts it into standby
-- **Zone targeting** — Control Zone 1 (main) or Zone 2
+- **Power Switch** — On powers the zone; Off puts it into standby
+- **Volume preset Switch** — On when the zone volume equals a configured level (0–99); turning On sets that level; turning Off does nothing (Off only means “not at this level”)
+- **Multi-accessory config** — Expose as many switches as you need on one receiver
+- **Zone targeting** — Each accessory can target Zone 1 (main) or Zone 2
 - **Accessory Information** — Manufacturer, model, and serial derived from your config
 
 ### Reliability
 - **LAN IP control** — Talks to the unit over TCP port `50000` using the AudioControl X/XR automation protocol
-- **State polling** — Refreshes On/Off from the receiver on a configurable interval (default every 90s; clamped 5s–86400s)
+- **State polling** — Refreshes accessory state on a configurable interval (default every 90s; clamped 5s–86400s)
 - **Bounded timeouts** — Connect and request timeouts so a stalled receiver cannot hang Homebridge; response buffers are capped
 - **Resilient polling** — One automatic retry on a silent/timed-out power query; the first poll failure warns briefly, then further failures demote to debug until recovery
-- **Startup config validation** — A missing/invalid host is fatal (cached accessories are cleared); out-of-range port/zone/refreshRate warn and fall back/clamp
+- **Startup config validation** — Missing/invalid host or accessories is fatal (cached accessories are cleared); out-of-range port/refreshRate warn and fall back/clamp
 
 ### Quality
 - **Strict TypeScript** — `strict` mode (`noImplicitAny`, `strictNullChecks`, no unused locals/params, no implicit returns, and more)
@@ -50,7 +52,7 @@ On the AudioControl unit:
 
 ### 3. Configure
 
-**Homebridge UI** (recommended): open this plugin's settings and set at least **Host / IP Address**. The form is generated from `config.schema.json` (name, host, port, accessory name, zone, model, refresh rate).
+**Homebridge UI** (recommended): open this plugin's settings, set **Host / IP Address**, and add accessories (power and optional volume presets).
 
 Or add the platform to your `config.json`:
 
@@ -62,9 +64,11 @@ Or add the platform to your `config.json`:
       "name": "Concert",
       "host": "192.168.1.50",
       "port": 50000,
-      "accessoryName": "Theater AVR",
-      "zone": 1,
       "model": "Concert XR-8S",
+      "accessories": [
+        { "type": "power", "name": "XR-8S", "zone": 1 },
+        { "type": "volumePreset", "name": "Concert 57", "zone": 1, "volume": 57 }
+      ],
       "options": {
         "refreshRate": 90
       }
@@ -75,7 +79,18 @@ Or add the platform to your `config.json`:
 
 ### 4. Restart Homebridge
 
-The power switch appears in the Home app after restart. Toggle it on to power the receiver; toggle it off for standby.
+Switches appear in the Home app after restart.
+
+### Example: Apple Shortcuts
+
+Typical listen shortcut:
+
+1. If **XR-8S** is Off → turn On
+2. Wait a few seconds for wake
+3. If **Concert 57** is Off → turn On (sets volume to 57)
+4. Start your playlist
+
+Shutdown shortcut: turn **XR-8S** Off (standby).
 
 ## Supported Devices
 
@@ -87,27 +102,39 @@ The power switch appears in the Home app after restart. Toggle it on to power th
 
 | Option | Required | Description |
 |--------|:--------:|-------------|
-| `name` | ✓ | Plugin instance name shown in the Homebridge log (required by the schema; pre-filled with `Concert`) |
+| `name` | ✓ | Plugin instance name shown in the Homebridge log |
 | `host` | ✓ | IP address or hostname of the receiver |
+| `accessories` | ✓ | Non-empty list of HomeKit switches (see below) |
 | `port` | | TCP control port (default: 50000) |
-| `accessoryName` | | HomeKit display name for the power switch (defaults to the platform `name`) |
-| `zone` | | Zone to control: `1` (main, default) or `2` |
 | `model` | | Model shown in Accessory Information (default: `Concert XR-8S`) |
-| `options.refreshRate` | | Seconds between power-state polls (default: 90, minimum: 5, maximum: 86400). Below-minimum / non-numeric values fall back to the default; above-maximum values are clamped. |
+| `options.refreshRate` | | Seconds between state polls (default: 90, minimum: 5, maximum: 86400). Below-minimum / non-numeric values fall back to the default; above-maximum values are clamped. |
+
+### `accessories[]` entries
+
+| Field | Required | Description |
+|-------|:--------:|-------------|
+| `type` | ✓ | `power` or `volumePreset` |
+| `name` | ✓ | HomeKit display name |
+| `zone` | | `1` (main, default) or `2` |
+| `volume` | for `volumePreset` | Absolute level `0`–`99` |
+
+Duplicate identity (same type + zone + volume) is rejected at startup.
 
 ## Not Working?
 
 1. **Check Control mode** — General Settings → Control must be **IP** (not RS232)
 2. **Check Standby Mode** — Must be **IP and HDMI ON**, or the unit will not answer while in standby
 3. **Check host/port** — Confirm the IP in the receiver's Network menu; control is on port `50000`
-4. **Restart Homebridge** — Required after any config change
+4. **Volume preset stays Off** — Volume query may fail while the unit is in standby; power on first
+5. **Restart Homebridge** — Required after any config change
 
 ## Security
 
-This plugin talks only to the LAN IP you configure. It stores no cloud credentials — only the host/port (and optional display options) in Homebridge's `config.json`.
+This plugin talks only to the LAN IP you configure. It stores no cloud credentials — only the host/port and accessory options in Homebridge's `config.json`.
 
-- **Secure the Homebridge host.** Anyone who can reach the receiver on your LAN can send the same power commands.
+- **Secure the Homebridge host.** Anyone who can reach the receiver on your LAN can send the same automation commands.
 - **Prefer a static IP / DHCP reservation** so the configured host does not drift.
+- **Volume presets are absolute.** A preset Switch only jumps to its configured level (not 100%), but choose levels carefully.
 
 The plugin never collects analytics. See [`SECURITY.md`](SECURITY.md).
 
@@ -119,8 +146,11 @@ The plugin never collects analytics. See [`SECURITY.md`](SECURITY.md).
 
 ## More Info
 
+- [Features](https://github.com/tbaur/homebridge-concert/blob/main/docs/FEATURES.md)
+- [Protocol reference](https://github.com/tbaur/homebridge-concert/blob/main/docs/PROTOCOL.md) (command catalog for contributors)
+- [Development](https://github.com/tbaur/homebridge-concert/blob/main/DEVELOPMENT.md)
 - [Report Issues](https://github.com/tbaur/homebridge-concert/issues)
-- [Changelog](CHANGELOG.md)
+- [Changelog](https://github.com/tbaur/homebridge-concert/blob/main/CHANGELOG.md)
 
 ## License
 

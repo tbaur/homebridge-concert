@@ -17,27 +17,37 @@
  * RC5 IR (0x08) with discrete Power On / Power Off codes — X/XR units treat
  * Power (0x00) as query-oriented and may not answer a direct set.
  *
+ * Volume uses command 0x0D with data 0x00–0x63 (0–99) to set, or 0xF0 to query.
+ *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ANSWER_OK = exports.RC5_POWER_OFF = exports.RC5_POWER_ON = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.POWER_QUERY = exports.POWER_ON = exports.POWER_STANDBY = exports.COMMAND_RC5 = exports.COMMAND_POWER = exports.FRAME_END = exports.FRAME_START = void 0;
+exports.ANSWER_OK = exports.RC5_POWER_OFF = exports.RC5_POWER_ON = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.VOLUME_QUERY = exports.POWER_QUERY = exports.POWER_ON = exports.POWER_STANDBY = exports.COMMAND_RC5 = exports.COMMAND_VOLUME = exports.COMMAND_POWER = exports.FRAME_END = exports.FRAME_START = void 0;
 exports.buildRequest = buildRequest;
 exports.rc5SystemForZone = rc5SystemForZone;
 exports.buildRc5 = buildRc5;
 exports.buildPowerOn = buildPowerOn;
 exports.buildPowerStandby = buildPowerStandby;
 exports.buildPowerQuery = buildPowerQuery;
+exports.buildVolumeQuery = buildVolumeQuery;
+exports.buildVolumeSet = buildVolumeSet;
 exports.tryParseResponse = tryParseResponse;
 exports.describeAnswerCode = describeAnswerCode;
 exports.isPowerOn = isPowerOn;
+exports.parseVolume = parseVolume;
 exports.formatFrame = formatFrame;
 const errors_1 = require("../errors");
+const settings_1 = require("../settings");
+Object.defineProperty(exports, "MAX_VOLUME", { enumerable: true, get: function () { return settings_1.MAX_VOLUME; } });
+Object.defineProperty(exports, "MIN_VOLUME", { enumerable: true, get: function () { return settings_1.MIN_VOLUME; } });
 /** Start-of-frame byte (`!`). */
 exports.FRAME_START = 0x21;
 /** End-of-frame byte (carriage return). */
 exports.FRAME_END = 0x0D;
 /** Power / standby status command code (query + status responses). */
 exports.COMMAND_POWER = 0x00;
+/** Absolute volume set / query command code. */
+exports.COMMAND_VOLUME = 0x0D;
 /** Simulate RC5 IR command (used for discrete power on/off). */
 exports.COMMAND_RC5 = 0x08;
 /** Enter standby (status / legacy set data byte). */
@@ -46,6 +56,8 @@ exports.POWER_STANDBY = 0x00;
 exports.POWER_ON = 0x01;
 /** Request current power state (query sentinel). */
 exports.POWER_QUERY = 0xF0;
+/** Request current volume (query sentinel). */
+exports.VOLUME_QUERY = 0xF0;
 /** RC5 system code for Zone 1 advanced / discrete functions. */
 exports.RC5_SYSTEM_ZONE1 = 0x10;
 /** RC5 system code for Zone 2. */
@@ -129,6 +141,22 @@ function buildPowerStandby(zone) {
 function buildPowerQuery(zone) {
     return buildRequest(zone, exports.COMMAND_POWER, Buffer.from([exports.POWER_QUERY]));
 }
+/** Build a volume-state query for the given zone. */
+function buildVolumeQuery(zone) {
+    return buildRequest(zone, exports.COMMAND_VOLUME, Buffer.from([exports.VOLUME_QUERY]));
+}
+/**
+ * Build an absolute volume set for the given zone.
+ *
+ * @param zone - Zone number (1 or 2)
+ * @param level - Volume 0–99 (`0x00`–`0x63`)
+ */
+function buildVolumeSet(zone, level) {
+    if (!Number.isInteger(level) || level < settings_1.MIN_VOLUME || level > settings_1.MAX_VOLUME) {
+        throw new RangeError(`Volume must be an integer ${settings_1.MIN_VOLUME}–${settings_1.MAX_VOLUME}, got ${level}`);
+    }
+    return buildRequest(zone, exports.COMMAND_VOLUME, Buffer.from([level]));
+}
 /**
  * Extract the first complete response frame from a buffer, if present.
  *
@@ -197,6 +225,21 @@ function isPowerOn(data) {
         return false;
     }
     throw new errors_1.ProtocolError(`Unexpected power state byte 0x${data[0].toString(16)}`);
+}
+/**
+ * Interpret a volume-command response data byte as a level 0–99.
+ *
+ * @throws {ProtocolError} when the payload is empty or out of range
+ */
+function parseVolume(data) {
+    if (data.length < 1) {
+        throw new errors_1.ProtocolError('Volume response data is empty');
+    }
+    const level = data[0];
+    if (level < settings_1.MIN_VOLUME || level > settings_1.MAX_VOLUME) {
+        throw new errors_1.ProtocolError(`Unexpected volume byte 0x${level.toString(16)}`);
+    }
+    return level;
 }
 /** Hex dump of a frame for debug logging (no newlines). */
 function formatFrame(frame) {

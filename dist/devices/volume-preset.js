@@ -5,22 +5,26 @@
  * Licensed under the Apache License, Version 2.0
  * See LICENSE file for full license text
  *
- * @fileoverview HomeKit Switch accessory for an AudioControl Concert receiver power state.
+ * @fileoverview HomeKit Switch for a configured absolute volume preset.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ReceiverAccessory = void 0;
+exports.VolumePresetAccessory = void 0;
 const settings_1 = require("../settings");
 /**
- * Exposes the receiver as a HomeKit Switch: On → power on, Off → standby.
+ * Exposes a volume level as a HomeKit Switch:
+ * On → current volume equals the target; set On → set that volume.
+ * Set Off is a no-op (Off only means "not at this level").
  */
-class ReceiverAccessory {
+class VolumePresetAccessory {
     platform;
     accessory;
     client;
     switchService;
-    isOn = false;
+    zone;
+    targetVolume;
+    isAtTarget = false;
     /**
-     * Bumped only by HomeKit power sets. A refresh that started before a set
+     * Bumped only by HomeKit sets. A refresh that started before a set
      * must not overwrite that set; a set is only discarded by a newer set.
      */
     setGeneration = 0;
@@ -34,12 +38,17 @@ class ReceiverAccessory {
         this.client = client;
         const { Service, Characteristic } = this.platform;
         const context = this.accessory.context;
+        this.zone = context.zone;
+        if (typeof context.volume !== 'number') {
+            throw new Error(`${accessory.displayName}: volumePreset context is missing volume`);
+        }
+        this.targetVolume = context.volume;
         const displayName = this.accessory.displayName;
         this.accessory.getService(Service.AccessoryInformation)
             .setCharacteristic(Characteristic.Name, displayName)
             .setCharacteristic(Characteristic.Manufacturer, 'AudioControl')
-            .setCharacteristic(Characteristic.Model, context.model || 'Concert XR')
-            .setCharacteristic(Characteristic.SerialNumber, `${context.host}:${context.port}`)
+            .setCharacteristic(Characteristic.Model, context.model || settings_1.DEFAULT_MODEL)
+            .setCharacteristic(Characteristic.SerialNumber, `${context.host}:${context.port}:z${context.zone}:vol:${context.volume}`)
             .setCharacteristic(Characteristic.FirmwareRevision, (0, settings_1.readPluginVersion)());
         this.switchService = this.accessory.getService(Service.Switch)
             ?? this.accessory.addService(Service.Switch, displayName);
@@ -51,38 +60,36 @@ class ReceiverAccessory {
     }
     /** Cached On value for HomeKit get requests. */
     handleGetOn() {
-        return this.isOn;
+        return this.isAtTarget;
     }
-    /** Power the receiver on or put it into standby. */
+    /**
+     * Set On → set the configured volume. Set Off → no volume change; snap the
+     * characteristic back to whether the zone is currently at the target.
+     */
     async handleSetOn(value) {
         const on = Boolean(value);
+        if (!on) {
+            this.switchService.updateCharacteristic(this.platform.Characteristic.On, this.isAtTarget);
+            return;
+        }
         const mySet = ++this.setGeneration;
         try {
-            await this.client.setPower(on);
-            // Only apply if a newer HomeKit set did not supersede this one. A concurrent
-            // poll must not invalidate a successful plugin-driven set (that used to make
-            // the next poll log the change as "(external)").
+            await this.client.setVolume(this.targetVolume, this.zone);
             if (mySet === this.setGeneration) {
-                this.isOn = on;
-                this.platform.log.info(`${this.accessory.displayName}: ${on ? 'ON' : 'STANDBY'}`);
+                this.isAtTarget = true;
+                this.platform.log.info(`${this.accessory.displayName}: volume ${this.targetVolume}`);
             }
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            this.platform.log.error(`${this.accessory.displayName} power set failed: ${message}`);
-            // Revert the characteristic so HomeKit does not show a lying state.
-            this.switchService.updateCharacteristic(this.platform.Characteristic.On, this.isOn);
-            // HapStatusError (not a raw Error) so Homebridge does not log an
-            // "Unhandled error thrown inside write handler" warning.
+            this.platform.log.error(`${this.accessory.displayName} volume set failed: ${message}`);
+            this.switchService.updateCharacteristic(this.platform.Characteristic.On, this.isAtTarget);
             throw new this.platform.api.hap.HapStatusError(-70402 /* HAPStatus.SERVICE_COMMUNICATION_FAILURE */);
         }
     }
     /**
-     * Poll the receiver and push the result into HomeKit. Safe to call on a timer.
-     * Concurrent callers share a single in-flight request (single-flight).
-     *
-     * `(external)` means the On/Off change was observed by polling — remote, front
-     * panel, HDMI-CEC, etc. — not a HomeKit write handled by this plugin.
+     * Poll volume and push On iff it matches the target. Concurrent callers share
+     * a single in-flight request (single-flight).
      */
     async refresh() {
         if (this.refreshInFlight) {
@@ -96,35 +103,41 @@ class ReceiverAccessory {
     async runRefresh() {
         const setGenerationAtStart = this.setGeneration;
         try {
-            const on = await this.client.getPowerState();
-            // Discard if a HomeKit set started (or completed) while we were awaiting.
+            const level = await this.client.getVolume(this.zone);
             if (setGenerationAtStart !== this.setGeneration) {
                 return;
             }
-            if (on !== this.isOn) {
-                this.platform.log.info(`${this.accessory.displayName}: ${on ? 'ON' : 'STANDBY'} (external)`);
+            const atTarget = level === this.targetVolume;
+            if (atTarget !== this.isAtTarget) {
+                this.platform.log.info(`${this.accessory.displayName}: ${atTarget ? 'ON' : 'OFF'} `
+                    + `(volume ${level}, external)`);
             }
-            this.isOn = on;
-            this.switchService.updateCharacteristic(this.platform.Characteristic.On, on);
+            this.isAtTarget = atTarget;
+            this.switchService.updateCharacteristic(this.platform.Characteristic.On, atTarget);
             if (this.pollFailureActive) {
                 this.pollFailureActive = false;
-                this.platform.log.info(`${this.accessory.displayName} power poll recovered`);
+                this.platform.log.info(`${this.accessory.displayName} volume poll recovered`);
             }
         }
         catch (error) {
             if (setGenerationAtStart !== this.setGeneration) {
                 return;
             }
+            // Standby / unreachable: treat as not-at-preset without tearing down.
+            if (this.isAtTarget) {
+                this.isAtTarget = false;
+                this.switchService.updateCharacteristic(this.platform.Characteristic.On, false);
+            }
             const message = error instanceof Error ? error.message : String(error);
             if (!this.pollFailureActive) {
                 this.pollFailureActive = true;
-                this.platform.log.warn(`${this.accessory.displayName} power poll failed: ${message}`);
+                this.platform.log.warn(`${this.accessory.displayName} volume poll failed: ${message}`);
             }
             else {
-                this.platform.log.debug?.(`${this.accessory.displayName} power poll failed: ${message}`);
+                this.platform.log.debug?.(`${this.accessory.displayName} volume poll failed: ${message}`);
             }
         }
     }
 }
-exports.ReceiverAccessory = ReceiverAccessory;
-//# sourceMappingURL=receiver.js.map
+exports.VolumePresetAccessory = VolumePresetAccessory;
+//# sourceMappingURL=volume-preset.js.map
