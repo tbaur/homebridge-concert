@@ -112,15 +112,20 @@ class ConcertPlatform {
         this.handlers.length = 0;
         for (const accessoryConfig of resolved) {
             const uuid = this.uuidFor(host, port, accessoryConfig);
+            let accessory = this.accessories.find((cached) => cached.UUID === uuid);
+            const previous = accessory?.context;
+            const previousSerial = previous?.serialNumber;
             const context = {
                 kind: accessoryConfig.kind,
                 host,
                 port,
                 zone: accessoryConfig.zone,
                 model,
+                serialNumber: typeof previousSerial === 'string' && previousSerial.length > 0
+                    ? previousSerial
+                    : (0, utils_1.newAccessorySerialNumber)(),
                 volume: accessoryConfig.volume,
             };
-            let accessory = this.accessories.find((cached) => cached.UUID === uuid);
             if (!accessory) {
                 this.log.info(`Registering accessory "${accessoryConfig.name}" `
                     + `(${(0, utils_1.accessoryIdentityKey)(accessoryConfig)}) at ${host}:${port}`);

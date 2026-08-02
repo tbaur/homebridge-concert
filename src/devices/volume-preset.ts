@@ -13,6 +13,7 @@ import { HAPStatus } from 'homebridge'
 import type { ConcertClient } from '../api'
 import { DEFAULT_MODEL, readPluginVersion } from '../settings'
 import type { AccessoryContext, RefreshableAccessory } from '../types'
+import { ensureAccessorySerialNumber } from '../utils'
 import type ConcertPlatform from '../platform'
 
 /**
@@ -32,6 +33,8 @@ export class VolumePresetAccessory implements RefreshableAccessory {
   private setGeneration = 0
   /** In-flight refresh promise so overlapping poll ticks share one request. */
   private refreshInFlight?: Promise<void>
+  /** In-flight On→setVolume so HomeKit write storms share one command. */
+  private setInFlight?: Promise<void>
   /** True after the first consecutive poll failure has been logged at warn. */
   private pollFailureActive = false
 
@@ -56,7 +59,7 @@ export class VolumePresetAccessory implements RefreshableAccessory {
       .setCharacteristic(Characteristic.Model, context.model || DEFAULT_MODEL)
       .setCharacteristic(
         Characteristic.SerialNumber,
-        `${context.host}:${context.port}:z${context.zone}:vol:${context.volume}`,
+        ensureAccessorySerialNumber(this.accessory),
       )
       .setCharacteristic(Characteristic.FirmwareRevision, readPluginVersion())
 
@@ -79,6 +82,9 @@ export class VolumePresetAccessory implements RefreshableAccessory {
   /**
    * Set On → set the configured volume. Set Off → no volume change; snap the
    * characteristic back to whether the zone is currently at the target.
+   *
+   * HomeKit often repeats On writes (Shortcuts, Control Center, retries). Skip
+   * when already at the preset, and coalesce concurrent sets into one command.
    */
   private async handleSetOn(value: CharacteristicValue): Promise<void> {
     const on = Boolean(value)
@@ -87,13 +93,31 @@ export class VolumePresetAccessory implements RefreshableAccessory {
       return
     }
 
+    if (this.isAtTarget) {
+      this.switchService.updateCharacteristic(this.platform.Characteristic.On, true)
+      return
+    }
+
+    if (this.setInFlight) {
+      return this.setInFlight
+    }
+
+    this.setInFlight = this.runSetOn().finally(() => {
+      this.setInFlight = undefined
+    })
+    return this.setInFlight
+  }
+
+  private async runSetOn(): Promise<void> {
     const mySet = ++this.setGeneration
     try {
       await this.client.setVolume(this.targetVolume, this.zone)
-      if (mySet === this.setGeneration) {
-        this.isAtTarget = true
-        this.platform.log.info(`${this.accessory.displayName}: SET ${this.targetVolume}`)
+      if (mySet !== this.setGeneration) {
+        return
       }
+      this.isAtTarget = true
+      this.switchService.updateCharacteristic(this.platform.Characteristic.On, true)
+      this.platform.log.info(`${this.accessory.displayName}: SET ${this.targetVolume}`)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.platform.log.error(`${this.accessory.displayName}: set failed: ${message}`)

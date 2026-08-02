@@ -6,6 +6,10 @@
  */
 
 export {
+  ensureAccessorySerialNumber,
+  newAccessorySerialNumber,
+} from './serial'
+export {
   accessoryIdentityKey,
   isValidHost,
   resolveAccessories,

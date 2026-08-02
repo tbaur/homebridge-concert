@@ -10,6 +10,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VolumePresetAccessory = void 0;
 const settings_1 = require("../settings");
+const utils_1 = require("../utils");
 /**
  * Exposes a volume level as a HomeKit Switch:
  * On → current volume equals the target; set On → set that volume.
@@ -30,6 +31,8 @@ class VolumePresetAccessory {
     setGeneration = 0;
     /** In-flight refresh promise so overlapping poll ticks share one request. */
     refreshInFlight;
+    /** In-flight On→setVolume so HomeKit write storms share one command. */
+    setInFlight;
     /** True after the first consecutive poll failure has been logged at warn. */
     pollFailureActive = false;
     constructor(platform, accessory, client) {
@@ -48,7 +51,7 @@ class VolumePresetAccessory {
             .setCharacteristic(Characteristic.Name, displayName)
             .setCharacteristic(Characteristic.Manufacturer, 'AudioControl')
             .setCharacteristic(Characteristic.Model, context.model || settings_1.DEFAULT_MODEL)
-            .setCharacteristic(Characteristic.SerialNumber, `${context.host}:${context.port}:z${context.zone}:vol:${context.volume}`)
+            .setCharacteristic(Characteristic.SerialNumber, (0, utils_1.ensureAccessorySerialNumber)(this.accessory))
             .setCharacteristic(Characteristic.FirmwareRevision, (0, settings_1.readPluginVersion)());
         this.switchService = this.accessory.getService(Service.Switch)
             ?? this.accessory.addService(Service.Switch, displayName);
@@ -65,6 +68,9 @@ class VolumePresetAccessory {
     /**
      * Set On → set the configured volume. Set Off → no volume change; snap the
      * characteristic back to whether the zone is currently at the target.
+     *
+     * HomeKit often repeats On writes (Shortcuts, Control Center, retries). Skip
+     * when already at the preset, and coalesce concurrent sets into one command.
      */
     async handleSetOn(value) {
         const on = Boolean(value);
@@ -72,13 +78,28 @@ class VolumePresetAccessory {
             this.switchService.updateCharacteristic(this.platform.Characteristic.On, this.isAtTarget);
             return;
         }
+        if (this.isAtTarget) {
+            this.switchService.updateCharacteristic(this.platform.Characteristic.On, true);
+            return;
+        }
+        if (this.setInFlight) {
+            return this.setInFlight;
+        }
+        this.setInFlight = this.runSetOn().finally(() => {
+            this.setInFlight = undefined;
+        });
+        return this.setInFlight;
+    }
+    async runSetOn() {
         const mySet = ++this.setGeneration;
         try {
             await this.client.setVolume(this.targetVolume, this.zone);
-            if (mySet === this.setGeneration) {
-                this.isAtTarget = true;
-                this.platform.log.info(`${this.accessory.displayName}: SET ${this.targetVolume}`);
+            if (mySet !== this.setGeneration) {
+                return;
             }
+            this.isAtTarget = true;
+            this.switchService.updateCharacteristic(this.platform.Characteristic.On, true);
+            this.platform.log.info(`${this.accessory.displayName}: SET ${this.targetVolume}`);
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);

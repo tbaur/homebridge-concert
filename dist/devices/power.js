@@ -10,6 +10,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PowerAccessory = void 0;
 const settings_1 = require("../settings");
+const utils_1 = require("../utils");
 /**
  * Exposes the receiver as a HomeKit Switch: On → power on, Off → standby.
  */
@@ -41,7 +42,7 @@ class PowerAccessory {
             .setCharacteristic(Characteristic.Name, displayName)
             .setCharacteristic(Characteristic.Manufacturer, 'AudioControl')
             .setCharacteristic(Characteristic.Model, context.model || settings_1.DEFAULT_MODEL)
-            .setCharacteristic(Characteristic.SerialNumber, `${context.host}:${context.port}:z${context.zone}:power`)
+            .setCharacteristic(Characteristic.SerialNumber, (0, utils_1.ensureAccessorySerialNumber)(this.accessory))
             .setCharacteristic(Characteristic.FirmwareRevision, (0, settings_1.readPluginVersion)());
         this.switchService = this.accessory.getService(Service.Switch)
             ?? this.accessory.addService(Service.Switch, displayName);
