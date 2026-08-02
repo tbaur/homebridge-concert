@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.7](https://github.com/tbaur/homebridge-concert/compare/v0.1.6...v0.1.7) (2026-08-02)
+
+
+### Bug Fixes
+
+* coalesce repeated volume-preset On writes ([#15](https://github.com/tbaur/homebridge-concert/issues/15)) ([04ef74b](https://github.com/tbaur/homebridge-concert/commit/04ef74b6e415915fae5c45ce078dadc4408b45d3))
+
 ## [0.1.6](https://github.com/tbaur/homebridge-concert/compare/v0.1.5...v0.1.6) (2026-08-02)
 
 
