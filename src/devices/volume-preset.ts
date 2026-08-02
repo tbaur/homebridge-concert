@@ -13,6 +13,7 @@ import { HAPStatus } from 'homebridge'
 import type { ConcertClient } from '../api'
 import { DEFAULT_MODEL, readPluginVersion } from '../settings'
 import type { AccessoryContext, RefreshableAccessory } from '../types'
+import { ensureAccessorySerialNumber } from '../utils'
 import type ConcertPlatform from '../platform'
 
 /**
@@ -58,7 +59,7 @@ export class VolumePresetAccessory implements RefreshableAccessory {
       .setCharacteristic(Characteristic.Model, context.model || DEFAULT_MODEL)
       .setCharacteristic(
         Characteristic.SerialNumber,
-        `${context.host}:${context.port}:z${context.zone}:vol:${context.volume}`,
+        ensureAccessorySerialNumber(this.accessory),
       )
       .setCharacteristic(Characteristic.FirmwareRevision, readPluginVersion())
 

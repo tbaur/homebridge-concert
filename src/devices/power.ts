@@ -13,6 +13,7 @@ import { HAPStatus } from 'homebridge'
 import type { ConcertClient } from '../api'
 import { DEFAULT_MODEL, readPluginVersion } from '../settings'
 import type { AccessoryContext, RefreshableAccessory } from '../types'
+import { ensureAccessorySerialNumber } from '../utils'
 import type ConcertPlatform from '../platform'
 
 /**
@@ -47,7 +48,10 @@ export class PowerAccessory implements RefreshableAccessory {
       .setCharacteristic(Characteristic.Name, displayName)
       .setCharacteristic(Characteristic.Manufacturer, 'AudioControl')
       .setCharacteristic(Characteristic.Model, context.model || DEFAULT_MODEL)
-      .setCharacteristic(Characteristic.SerialNumber, `${context.host}:${context.port}:z${context.zone}:power`)
+      .setCharacteristic(
+        Characteristic.SerialNumber,
+        ensureAccessorySerialNumber(this.accessory),
+      )
       .setCharacteristic(Characteristic.FirmwareRevision, readPluginVersion())
 
     this.switchService = this.accessory.getService(Service.Switch)

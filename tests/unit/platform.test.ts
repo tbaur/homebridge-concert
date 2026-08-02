@@ -169,6 +169,12 @@ describe('ConcertPlatform', () => {
         expect.objectContaining({ displayName: 'XR-8S Volume' }),
       ]),
     )
+    const registered = (api.registerPlatformAccessories as jest.Mock).mock.calls[0][2][0] as {
+      context: { serialNumber: string }
+    }
+    expect(registered.context.serialNumber).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    )
     expect(ConcertClient.prototype.getPowerState).toHaveBeenCalled()
     expect(ConcertClient.prototype.getVolume).toHaveBeenCalled()
     api.emit('shutdown')
@@ -186,7 +192,7 @@ describe('ConcertPlatform', () => {
     const cached = {
       UUID: uuid,
       displayName: 'Old Name',
-      context: {},
+      context: { serialNumber: 'cached-serial-abc' },
       updateDisplayName: undefined as ((name: string) => void) | undefined,
       getService: jest.fn().mockReturnValue({
         setCharacteristic: jest.fn().mockReturnThis(),
@@ -220,6 +226,9 @@ describe('ConcertPlatform', () => {
       [stale],
     )
     expect(cached.displayName).toBe('Theater')
+    expect(cached.context).toEqual(expect.objectContaining({
+      serialNumber: 'cached-serial-abc',
+    }))
     expect(log.info).toHaveBeenCalledWith('Renamed accessory "Old Name" → "Theater"')
     api.emit('shutdown')
   })

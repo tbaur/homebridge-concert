@@ -33,6 +33,7 @@ import type {
 } from './types'
 import {
   accessoryIdentityKey,
+  newAccessorySerialNumber,
   resolveAccessories,
   resolvePort,
   resolveRefreshRateSec,
@@ -154,16 +155,21 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
 
     for (const accessoryConfig of resolved) {
       const uuid = this.uuidFor(host, port, accessoryConfig)
+      let accessory = this.accessories.find((cached) => cached.UUID === uuid)
+      const previous = accessory?.context as AccessoryContext | undefined
+      const previousSerial = previous?.serialNumber
       const context: AccessoryContext = {
         kind: accessoryConfig.kind,
         host,
         port,
         zone: accessoryConfig.zone,
         model,
+        serialNumber: typeof previousSerial === 'string' && previousSerial.length > 0
+          ? previousSerial
+          : newAccessorySerialNumber(),
         volume: accessoryConfig.volume,
       }
 
-      let accessory = this.accessories.find((cached) => cached.UUID === uuid)
       if (!accessory) {
         this.log.info(
           `Registering accessory "${accessoryConfig.name}" `

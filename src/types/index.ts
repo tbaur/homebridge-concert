@@ -73,6 +73,11 @@ export interface AccessoryContext {
   port: number
   zone: number
   model: string
+  /**
+   * Stable opaque HomeKit SerialNumber. Generated once and persisted in the
+   * Homebridge cache so host/IP changes do not rewrite Accessory Information.
+   */
+  serialNumber: string
   /** Present when `kind` is `volumePreset`. */
   volume?: number
 }

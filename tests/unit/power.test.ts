@@ -109,6 +109,22 @@ describe('PowerAccessory', () => {
     expect(infoService.setCharacteristic).toHaveBeenCalledWith('FirmwareRevision', expect.stringMatching(/^\d+\.\d+\.\d+/))
   })
 
+  it('uses a persisted opaque SerialNumber, not host:port', () => {
+    const { platform, accessory, infoService } = createPlatform()
+    ;(accessory.context as { serialNumber?: string }).serialNumber = 'persisted-serial'
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn(),
+    } as unknown as ConcertClient
+
+    new PowerAccessory(platform, accessory, client)
+    expect(infoService.setCharacteristic).toHaveBeenCalledWith('SerialNumber', 'persisted-serial')
+    expect(infoService.setCharacteristic).not.toHaveBeenCalledWith(
+      'SerialNumber',
+      expect.stringContaining('192.168.1.50'),
+    )
+  })
+
   it('reverts the characteristic and throws HapStatusError when setPower fails', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = {

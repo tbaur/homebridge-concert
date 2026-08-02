@@ -6,7 +6,10 @@
  * See LICENSE file for full license text
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateConfig = exports.resolveZone = exports.resolveRefreshRateSec = exports.resolvePort = exports.resolveAccessories = exports.isValidHost = exports.accessoryIdentityKey = void 0;
+exports.validateConfig = exports.resolveZone = exports.resolveRefreshRateSec = exports.resolvePort = exports.resolveAccessories = exports.isValidHost = exports.accessoryIdentityKey = exports.newAccessorySerialNumber = exports.ensureAccessorySerialNumber = void 0;
+var serial_1 = require("./serial");
+Object.defineProperty(exports, "ensureAccessorySerialNumber", { enumerable: true, get: function () { return serial_1.ensureAccessorySerialNumber; } });
+Object.defineProperty(exports, "newAccessorySerialNumber", { enumerable: true, get: function () { return serial_1.newAccessorySerialNumber; } });
 var validators_1 = require("./validators");
 Object.defineProperty(exports, "accessoryIdentityKey", { enumerable: true, get: function () { return validators_1.accessoryIdentityKey; } });
 Object.defineProperty(exports, "isValidHost", { enumerable: true, get: function () { return validators_1.isValidHost; } });
