@@ -25,7 +25,7 @@ exports.DEFAULT_CONTROL_PORT = 50_000;
 /** Default zone for automation commands (Zone 1 / master). */
 exports.DEFAULT_ZONE = 1;
 /** Default model shown in HomeKit Accessory Information. */
-exports.DEFAULT_MODEL = 'Concert XR-8S';
+exports.DEFAULT_MODEL = 'AudioControl Concert XR-8S';
 /** Minimum absolute volume level (X/XR protocol). */
 exports.MIN_VOLUME = 0;
 /** Maximum absolute volume level (X/XR protocol, 0x63). */

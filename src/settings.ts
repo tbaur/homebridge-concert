@@ -27,7 +27,7 @@ export const DEFAULT_CONTROL_PORT = 50_000
 export const DEFAULT_ZONE = 1
 
 /** Default model shown in HomeKit Accessory Information. */
-export const DEFAULT_MODEL = 'Concert XR-8S'
+export const DEFAULT_MODEL = 'AudioControl Concert XR-8S'
 
 /** Minimum absolute volume level (X/XR protocol). */
 export const MIN_VOLUME = 0

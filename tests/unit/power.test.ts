@@ -59,13 +59,13 @@ function createPlatform() {
   } as unknown as ConcertPlatform
 
   const accessory = {
-    displayName: 'XR-8S',
+    displayName: 'XR-8S Power',
     context: {
       kind: 'power',
       host: '192.168.1.50',
       port: 50_000,
       zone: 1,
-      model: 'Concert XR-8S',
+      model: 'AudioControl Concert XR-8S',
     },
     getService: jest.fn((service: string) => {
       if (service === 'AccessoryInformation') {
@@ -95,7 +95,7 @@ describe('PowerAccessory', () => {
     await setHandler(true)
 
     expect(client.setPower).toHaveBeenCalledWith(true, 1)
-    expect(platform.log.info).toHaveBeenCalledWith('XR-8S: ON')
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON')
   })
 
   it('sets FirmwareRevision from the package version', () => {
@@ -151,10 +151,10 @@ describe('PowerAccessory', () => {
 
     expect(platform.log.warn).toHaveBeenCalledTimes(1)
     expect(platform.log.warn).toHaveBeenCalledWith(
-      'XR-8S power poll failed: Timed out waiting for response',
+      'XR-8S Power: poll failed: Timed out waiting for response',
     )
     expect(platform.log.debug).toHaveBeenCalledWith(
-      'XR-8S power poll failed: Timed out waiting for response',
+      'XR-8S Power: poll failed: Timed out waiting for response',
     )
   })
 
@@ -176,7 +176,7 @@ describe('PowerAccessory', () => {
     await pendingRefresh
 
     expect(switchService.updateCharacteristic).not.toHaveBeenCalledWith('On', false)
-    expect(platform.log.info).toHaveBeenCalledWith('XR-8S: ON')
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON')
     expect(platform.log.info).not.toHaveBeenCalledWith(expect.stringContaining('(external)'))
     const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
     expect(getHandler()).toBe(true)
@@ -205,8 +205,8 @@ describe('PowerAccessory', () => {
     resolvePoll?.(true)
     await pendingRefresh
 
-    expect(platform.log.info).toHaveBeenCalledWith('XR-8S: ON')
-    expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S: ON (external)')
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON')
+    expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S Power: ON (external)')
     const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
     expect(getHandler()).toBe(true)
   })
@@ -221,7 +221,7 @@ describe('PowerAccessory', () => {
     const handler = new PowerAccessory(platform, accessory, client)
     await handler.refresh()
 
-    expect(platform.log.info).toHaveBeenCalledWith('XR-8S: ON (external)')
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON (external)')
   })
 
   it('returns the cached On value from get', () => {
@@ -267,6 +267,6 @@ describe('PowerAccessory', () => {
     await handler.refresh()
     await handler.refresh()
 
-    expect(platform.log.info).toHaveBeenCalledWith('XR-8S power poll recovered')
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: poll recovered')
   })
 })

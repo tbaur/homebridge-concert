@@ -22,7 +22,7 @@ function baseConfig(overrides: Partial<ConcertPlatformConfig> = {}): ConcertPlat
     name: 'Concert',
     host: '192.168.1.50',
     accessories: [
-      { type: 'power', name: 'XR-8S', zone: 1 },
+      { type: 'power', name: 'XR-8S Power', zone: 1 },
     ],
     ...overrides,
   }
@@ -47,7 +47,7 @@ describe('validateConfig', () => {
 
   it('requires volume for volumePreset', () => {
     const result = validateConfig(baseConfig({
-      accessories: [{ type: 'volumePreset', name: 'Concert 57' }],
+      accessories: [{ type: 'volumePreset', name: 'XR-8S Volume' }],
     }))
     expect(result.errors.some((e) => e.includes('volume'))).toBe(true)
   })
@@ -55,8 +55,8 @@ describe('validateConfig', () => {
   it('rejects duplicate accessory identities', () => {
     const result = validateConfig(baseConfig({
       accessories: [
-        { type: 'volumePreset', name: 'A', volume: 57 },
-        { type: 'volumePreset', name: 'B', volume: 57 },
+        { type: 'volumePreset', name: 'XR-8S Volume A', volume: 57 },
+        { type: 'volumePreset', name: 'XR-8S Volume B', volume: 57 },
       ],
     }))
     expect(result.errors.some((e) => e.includes('duplicates'))).toBe(true)
@@ -108,7 +108,7 @@ describe('validateConfig', () => {
 
   it('errors on invalid accessory zone', () => {
     const result = validateConfig(baseConfig({
-      accessories: [{ type: 'power', name: 'XR-8S', zone: 9 }],
+      accessories: [{ type: 'power', name: 'XR-8S Power', zone: 9 }],
     }))
     expect(result.errors.some((e) => e.includes('zone'))).toBe(true)
   })
@@ -129,13 +129,13 @@ describe('resolveAccessories', () => {
   it('resolves power and volume presets', () => {
     const resolved = resolveAccessories(baseConfig({
       accessories: [
-        { type: 'power', name: 'XR-8S' },
-        { type: 'volumePreset', name: 'Concert 57', volume: 57 },
+        { type: 'power', name: 'XR-8S Power' },
+        { type: 'volumePreset', name: 'XR-8S Volume', volume: 57 },
       ],
     }))
     expect(resolved).toEqual([
-      { kind: 'power', name: 'XR-8S', zone: 1 },
-      { kind: 'volumePreset', name: 'Concert 57', zone: 1, volume: 57 },
+      { kind: 'power', name: 'XR-8S Power', zone: 1 },
+      { kind: 'volumePreset', name: 'XR-8S Volume', zone: 1, volume: 57 },
     ])
     expect(accessoryIdentityKey(resolved[0])).toBe('z1:power')
     expect(accessoryIdentityKey(resolved[1])).toBe('z1:vol:57')

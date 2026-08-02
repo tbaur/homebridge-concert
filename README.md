@@ -64,10 +64,19 @@ Or add the platform to your `config.json`:
       "name": "Concert",
       "host": "192.168.1.50",
       "port": 50000,
-      "model": "Concert XR-8S",
+      "model": "AudioControl Concert XR-8S",
       "accessories": [
-        { "type": "power", "name": "XR-8S", "zone": 1 },
-        { "type": "volumePreset", "name": "Concert 57", "zone": 1, "volume": 57 }
+        {
+          "type": "power",
+          "name": "XR-8S Power",
+          "zone": 1
+        },
+        {
+          "type": "volumePreset",
+          "name": "XR-8S Volume",
+          "zone": 1,
+          "volume": 57
+        }
       ],
       "options": {
         "refreshRate": 90
@@ -85,12 +94,54 @@ Switches appear in the Home app after restart.
 
 Typical listen shortcut:
 
-1. If **XR-8S** is Off → turn On
+1. If **XR-8S Power** is Off → turn On
 2. Wait a few seconds for wake
-3. If **Concert 57** is Off → turn On (sets volume to 57)
+3. If **XR-8S Volume** is Off → turn On (sets volume to 57)
 4. Start your playlist
 
-Shutdown shortcut: turn **XR-8S** Off (standby).
+Shutdown shortcut: turn **XR-8S Power** Off (standby).
+
+### Example logs
+
+With the config above (host `192.168.1.50`), Homebridge looks like:
+
+```text
+[Concert] Initializing Concert platform
+[Concert] Registering accessory "XR-8S Power" (z1:power) at 192.168.1.50:50000
+[Concert] Registering accessory "XR-8S Volume" (z1:vol:57) at 192.168.1.50:50000
+[Concert] Polling accessory state every 90s
+[Concert] XR-8S Power: STANDBY (external)
+[Concert] XR-8S Volume: poll failed: Timed out waiting for response
+```
+
+After a listen Shortcut (power on, then set volume 57):
+
+```text
+[Concert] XR-8S Power: ON
+[Concert] XR-8S Volume: SET 57
+```
+
+External changes (remote / front panel):
+
+```text
+[Concert] XR-8S Power: STANDBY (external)
+[Concert] XR-8S Volume: OFF (level 40, external)
+```
+
+Poll recovery after the receiver was unreachable:
+
+```text
+[Concert] XR-8S Power: poll recovered
+[Concert] XR-8S Volume: poll recovered
+[Concert] XR-8S Volume: ON (level 57, external)
+```
+
+Set failures:
+
+```text
+[Concert] XR-8S Power: set failed: Timed out waiting for response
+[Concert] XR-8S Volume: set failed: volume set rejected: 0x85 (invalid command in current state)
+```
 
 ## Supported Devices
 
@@ -106,7 +157,7 @@ Shutdown shortcut: turn **XR-8S** Off (standby).
 | `host` | ✓ | IP address or hostname of the receiver |
 | `accessories` | ✓ | Non-empty list of HomeKit switches (see below) |
 | `port` | | TCP control port (default: 50000) |
-| `model` | | Model shown in Accessory Information (default: `Concert XR-8S`) |
+| `model` | | Model shown in Accessory Information (default: `AudioControl Concert XR-8S`) |
 | `options.refreshRate` | | Seconds between state polls (default: 90, minimum: 5, maximum: 86400). Below-minimum / non-numeric values fall back to the default; above-maximum values are clamped. |
 
 ### `accessories[]` entries

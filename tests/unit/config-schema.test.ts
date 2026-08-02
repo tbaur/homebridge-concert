@@ -29,12 +29,23 @@ describe('config.schema.json', () => {
     expect(accessories.type).toBe('array')
     expect(accessories.minItems).toBe(1)
     expect(accessories.items.required).toEqual(expect.arrayContaining(['type', 'name']))
-    expect(accessories.items.properties.type.oneOf).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ enum: ['power'] }),
-        expect.objectContaining({ enum: ['volumePreset'] }),
-      ]),
-    )
+    expect(accessories.items.properties.type.enum).toEqual(['power', 'volumePreset'])
+  })
+
+  it('binds accessory form fields under accessories[] (not root name/type)', () => {
+    const accessoriesForm = schema.layout.find(
+      (entry) => typeof entry === 'object' && entry !== null && 'key' in entry && entry.key === 'accessories',
+    ) as { key: string; type: string; items: Array<string | { key: string }> }
+    expect(accessoriesForm.type).toBe('array')
+    const keys = accessoriesForm.items.map((item) => (typeof item === 'string' ? item : item.key))
+    expect(keys).toEqual(expect.arrayContaining([
+      'accessories[].type',
+      'accessories[].name',
+      'accessories[].zone',
+      'accessories[].volume',
+    ]))
+    expect(keys).not.toContain('type')
+    expect(keys).not.toContain('name')
   })
 
   it('uses editable integer fields (no min/max sliders) for port and refreshRate', () => {
@@ -47,7 +58,7 @@ describe('config.schema.json', () => {
     expect(port.maximum).toBeUndefined()
     expect(refreshRate.minimum).toBeUndefined()
     expect(refreshRate.maximum).toBeUndefined()
-    expect(schema.form).toEqual(expect.arrayContaining([
+    expect(schema.layout).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: 'port', type: 'integer' }),
       expect.objectContaining({ key: 'options.refreshRate', type: 'integer' }),
       expect.objectContaining({ key: 'accessories', type: 'array' }),

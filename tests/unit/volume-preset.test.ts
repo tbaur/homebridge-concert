@@ -59,13 +59,13 @@ function createPlatform(volume = 57) {
   } as unknown as ConcertPlatform
 
   const accessory = {
-    displayName: 'Concert 57',
+    displayName: 'XR-8S Volume',
     context: {
       kind: 'volumePreset',
       host: '192.168.1.50',
       port: 50_000,
       zone: 1,
-      model: 'Concert XR-8S',
+      model: 'AudioControl Concert XR-8S',
       volume,
     },
     getService: jest.fn((service: string) => {
@@ -96,7 +96,7 @@ describe('VolumePresetAccessory', () => {
     await setHandler(true)
 
     expect(client.setVolume).toHaveBeenCalledWith(57, 1)
-    expect(platform.log.info).toHaveBeenCalledWith('Concert 57: volume 57')
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: SET 57')
   })
 
   it('treats Off as a no-op and snaps the characteristic back', async () => {
@@ -131,7 +131,7 @@ describe('VolumePresetAccessory', () => {
     await handler.refresh()
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
     expect(platform.log.info).toHaveBeenCalledWith(
-      expect.stringContaining('(volume 57, external)'),
+      expect.stringContaining('(level 57, external)'),
     )
   })
 
@@ -150,7 +150,7 @@ describe('VolumePresetAccessory', () => {
 
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', false)
     expect(platform.log.warn).toHaveBeenCalledWith(
-      'Concert 57 volume poll failed: standby',
+      'XR-8S Volume: poll failed: standby',
     )
   })
 
@@ -225,9 +225,9 @@ describe('VolumePresetAccessory', () => {
     await handler.refresh()
 
     expect(platform.log.debug).toHaveBeenCalledWith(
-      'Concert 57 volume poll failed: timeout',
+      'XR-8S Volume: poll failed: timeout',
     )
-    expect(platform.log.info).toHaveBeenCalledWith('Concert 57 volume poll recovered')
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: poll recovered')
   })
 
   it('discards a stale poll that finishes after a set', async () => {
