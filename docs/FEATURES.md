@@ -4,15 +4,17 @@
 
 ## Core Features
 
-- ✅ Power on / standby exposed as a HomeKit Switch
-- ✅ Zone 1 (main) or Zone 2 targeting
+- ✅ Multi-accessory platform: configure one or more HomeKit Switches per receiver
+- ✅ Power on / standby (`type: power`)
+- ✅ Volume preset Switch (`type: volumePreset`) — On when volume equals a configured 0–99 level; set On sets that level; set Off is a no-op
+- ✅ Per-accessory zone targeting (Zone 1 or Zone 2)
 - ✅ LAN IP control over TCP port 50000 (AudioControl X/XR automation protocol)
-- ✅ Configurable power-state polling (90s default, 5s–86400s clamp)
+- ✅ Configurable state polling (90s default, 5s–86400s clamp)
 - ✅ Bounded connect and request timeouts with a capped response buffer
 - ✅ Short-lived TCP connections per command (no sticky idle sockets)
-- ✅ Startup config validation (fatal host errors; warn-and-default for port/zone/refreshRate)
-- ✅ Stale-accessory cleanup when host/port/zone changes; cached accessories cleared on invalid config
-- ✅ Set/poll race protection and single-flight refresh
+- ✅ Startup config validation (fatal host/accessories errors; warn-and-default for port/refreshRate)
+- ✅ Stale-accessory cleanup when accessories are removed or identity changes; cached accessories cleared on invalid config
+- ✅ Set/poll race protection and single-flight refresh per accessory
 - ✅ One automatic retry on transient power-query timeouts
 - ✅ Quiet consecutive poll failures after the first warn
 - ✅ Homebridge UI settings form via `config.schema.json`
@@ -23,7 +25,11 @@
 
 | Type | HomeKit services |
 |------|------------------|
-| **AudioControl Concert XR** (e.g. XR-8S) | Switch (power) |
+| **AudioControl Concert XR** (e.g. XR-8S) | Switch (power), Switch (volume preset) |
+
+## Protocol surface
+
+Full automation command catalog (including capabilities not yet exposed in HomeKit): [PROTOCOL.md](PROTOCOL.md).
 
 ## Architecture
 

@@ -13,9 +13,16 @@ import {
   DEFAULT_REFRESH_RATE_SEC,
   DEFAULT_ZONE,
   MAX_REFRESH_RATE_SEC,
+  MAX_VOLUME,
   MIN_REFRESH_RATE_SEC,
+  MIN_VOLUME,
 } from '../settings'
-import type { ConcertPlatformConfig } from '../types'
+import type {
+  AccessoryKind,
+  ConcertAccessoryConfig,
+  ConcertPlatformConfig,
+  ResolvedAccessory,
+} from '../types'
 
 /**
  * Outcome of validating the platform config.
@@ -56,11 +63,24 @@ export function isValidHost(value: string): boolean {
   return true
 }
 
+function isAccessoryKind(value: unknown): value is AccessoryKind {
+  return value === 'power' || value === 'volumePreset'
+}
+
+/** Stable identity key used for duplicate detection and UUID generation. */
+export function accessoryIdentityKey(accessory: ResolvedAccessory): string {
+  if (accessory.kind === 'volumePreset') {
+    return `z${accessory.zone}:vol:${accessory.volume}`
+  }
+  return `z${accessory.zone}:power`
+}
+
 /**
  * Validate the platform config.
  *
- * Fatal: missing/invalid `host`. Non-fatal: out-of-range `port`, `zone`, or
- * `refreshRate` — those produce warnings and fall back/clamp via the resolvers.
+ * Fatal: missing/invalid `host`, missing/invalid `accessories`.
+ * Non-fatal: out-of-range `port` or `refreshRate` — those produce warnings and
+ * fall back/clamp via the resolvers.
  */
 export function validateConfig(config: ConcertPlatformConfig | undefined): ConfigValidationResult {
   const errors: string[] = []
@@ -85,12 +105,6 @@ export function validateConfig(config: ConcertPlatformConfig | undefined): Confi
     }
   }
 
-  if (config.zone !== undefined) {
-    if (!Number.isInteger(config.zone) || (config.zone !== 1 && config.zone !== 2)) {
-      warnings.push(`zone ${String(config.zone)} is invalid; using default ${DEFAULT_ZONE}.`)
-    }
-  }
-
   const refreshRate = config.options?.refreshRate
   if (refreshRate !== undefined) {
     if (typeof refreshRate !== 'number' || !Number.isInteger(refreshRate) || Number.isNaN(refreshRate)) {
@@ -109,7 +123,105 @@ export function validateConfig(config: ConcertPlatformConfig | undefined): Confi
     }
   }
 
+  if (!Array.isArray(config.accessories) || config.accessories.length === 0) {
+    errors.push('accessories is required and must contain at least one entry.')
+  } else {
+    const seen = new Set<string>()
+    config.accessories.forEach((entry, index) => {
+      const label = `accessories[${index}]`
+      const resolved = tryResolveAccessory(entry, label, errors)
+      if (!resolved) {
+        return
+      }
+      const key = accessoryIdentityKey(resolved)
+      if (seen.has(key)) {
+        errors.push(`${label} duplicates another accessory (${key}).`)
+      } else {
+        seen.add(key)
+      }
+    })
+  }
+
   return { errors, warnings }
+}
+
+/**
+ * Resolve and validate accessories after `validateConfig` has reported no errors.
+ *
+ * Zone defaults to 1 when omitted or invalid (invalid zone already fatal when
+ * validating entries that set an explicit bad zone).
+ */
+export function resolveAccessories(config: ConcertPlatformConfig): ResolvedAccessory[] {
+  const errors: string[] = []
+  const resolved: ResolvedAccessory[] = []
+  for (const [index, entry] of (config.accessories ?? []).entries()) {
+    const accessory = tryResolveAccessory(entry, `accessories[${index}]`, errors)
+    if (accessory) {
+      resolved.push(accessory)
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(errors.join(' '))
+  }
+  return resolved
+}
+
+function tryResolveAccessory(
+  entry: ConcertAccessoryConfig | undefined,
+  label: string,
+  errors: string[],
+): ResolvedAccessory | undefined {
+  if (!entry || typeof entry !== 'object') {
+    errors.push(`${label} must be an object.`)
+    return undefined
+  }
+
+  if (!isAccessoryKind(entry.type)) {
+    errors.push(`${label}.type must be "power" or "volumePreset".`)
+    return undefined
+  }
+
+  if (!isNonEmptyString(entry.name)) {
+    errors.push(`${label}.name is required.`)
+    return undefined
+  }
+
+  let zone = DEFAULT_ZONE
+  if (entry.zone !== undefined) {
+    if (entry.zone !== 1 && entry.zone !== 2) {
+      errors.push(`${label}.zone must be 1 or 2.`)
+      return undefined
+    }
+    zone = entry.zone
+  }
+
+  if (entry.type === 'power') {
+    return {
+      kind: 'power',
+      name: entry.name.trim(),
+      zone,
+    }
+  }
+
+  if (
+    typeof entry.volume !== 'number'
+    || !Number.isInteger(entry.volume)
+    || entry.volume < MIN_VOLUME
+    || entry.volume > MAX_VOLUME
+  ) {
+    errors.push(
+      `${label}.volume is required for volumePreset and must be an integer `
+      + `${MIN_VOLUME}–${MAX_VOLUME}.`,
+    )
+    return undefined
+  }
+
+  return {
+    kind: 'volumePreset',
+    name: entry.name.trim(),
+    zone,
+    volume: entry.volume,
+  }
 }
 
 /** Resolve a usable TCP port, falling back to the AudioControl default. */

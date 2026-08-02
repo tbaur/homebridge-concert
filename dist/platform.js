@@ -9,12 +9,12 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const api_1 = require("./api");
-const receiver_1 = require("./devices/receiver");
+const devices_1 = require("./devices");
 const settings_1 = require("./settings");
 const utils_1 = require("./utils");
 /**
- * Registers a single Switch accessory for the configured Concert receiver
- * and polls its power state on a timer.
+ * Registers configured Switch accessories for a Concert receiver and polls
+ * their state on a shared timer.
  */
 class ConcertPlatform {
     log;
@@ -23,7 +23,7 @@ class ConcertPlatform {
     Characteristic;
     accessories = [];
     config;
-    handler;
+    handlers = [];
     client;
     pollTimer;
     stopped = false;
@@ -94,43 +94,63 @@ class ConcertPlatform {
         this.accessories.length = 0;
     }
     /**
-     * Create or update the Switch accessory for the configured receiver and start
-     * polling power state.
+     * Create or update Switch accessories for each configured entry and start
+     * polling their state.
      */
     discoverDevices() {
         const host = this.config.host.trim();
         const port = (0, utils_1.resolvePort)(this.config.port);
-        const zone = (0, utils_1.resolveZone)(this.config.zone);
-        const model = (this.config.model?.trim() || 'Concert XR-8S');
-        const displayName = (this.config.accessoryName?.trim() || this.config.name?.trim() || settings_1.PLATFORM_NAME);
-        const context = { host, port, zone, model };
-        const uuid = this.api.hap.uuid.generate(`${settings_1.UUID_PREFIX}${host}:${port}:z${zone}`);
-        // Always drop accessories that no longer match the configured target.
-        this.removeStaleAccessories(uuid);
-        let accessory = this.accessories.find((cached) => cached.UUID === uuid);
-        if (!accessory) {
-            this.log.info(`Registering accessory "${displayName}" at ${host}:${port} (zone ${zone})`);
-            accessory = new this.api.platformAccessory(displayName, uuid);
-            accessory.context = context;
-            this.api.registerPlatformAccessories(settings_1.PLUGIN_NAME, settings_1.PLATFORM_NAME, [accessory]);
-            this.accessories.push(accessory);
-        }
-        else {
-            accessory.context = context;
-            this.applyAccessoryDisplayName(accessory, displayName);
-            this.api.updatePlatformAccessories([accessory]);
-            this.log.info(`Restored accessory "${displayName}" at ${host}:${port} (zone ${zone})`);
-        }
+        const model = (this.config.model?.trim() || settings_1.DEFAULT_MODEL);
+        const resolved = (0, utils_1.resolveAccessories)(this.config);
+        const keepUuids = new Set(resolved.map((accessory) => this.uuidFor(host, port, accessory)));
+        this.removeStaleAccessories(keepUuids);
         this.client = new api_1.ConcertClient({
             host,
             port,
-            zone,
             logger: this.log,
         });
-        this.handler = new receiver_1.ReceiverAccessory(this, accessory, this.client);
+        this.handlers.length = 0;
+        for (const accessoryConfig of resolved) {
+            const uuid = this.uuidFor(host, port, accessoryConfig);
+            const context = {
+                kind: accessoryConfig.kind,
+                host,
+                port,
+                zone: accessoryConfig.zone,
+                model,
+                volume: accessoryConfig.volume,
+            };
+            let accessory = this.accessories.find((cached) => cached.UUID === uuid);
+            if (!accessory) {
+                this.log.info(`Registering accessory "${accessoryConfig.name}" `
+                    + `(${(0, utils_1.accessoryIdentityKey)(accessoryConfig)}) at ${host}:${port}`);
+                accessory = new this.api.platformAccessory(accessoryConfig.name, uuid);
+                accessory.context = context;
+                this.api.registerPlatformAccessories(settings_1.PLUGIN_NAME, settings_1.PLATFORM_NAME, [accessory]);
+                this.accessories.push(accessory);
+            }
+            else {
+                accessory.context = context;
+                this.applyAccessoryDisplayName(accessory, accessoryConfig.name);
+                this.api.updatePlatformAccessories([accessory]);
+                this.log.info(`Restored accessory "${accessoryConfig.name}" `
+                    + `(${(0, utils_1.accessoryIdentityKey)(accessoryConfig)}) at ${host}:${port}`);
+            }
+            this.handlers.push(this.createHandler(accessoryConfig, accessory, this.client));
+        }
         this.startPolling();
-        // Immediate refresh so HomeKit has a real value shortly after launch.
-        void this.handler.refresh();
+        for (const handler of this.handlers) {
+            void handler.refresh();
+        }
+    }
+    createHandler(config, accessory, client) {
+        if (config.kind === 'power') {
+            return new devices_1.PowerAccessory(this, accessory, client);
+        }
+        return new devices_1.VolumePresetAccessory(this, accessory, client);
+    }
+    uuidFor(host, port, accessory) {
+        return this.api.hap.uuid.generate(`${settings_1.UUID_PREFIX}${host}:${port}:${(0, utils_1.accessoryIdentityKey)(accessory)}`);
     }
     /**
      * Sync the accessory display name onto the PlatformAccessory wrapper and the
@@ -155,9 +175,9 @@ class ConcertPlatform {
         }
         this.log.info(`Renamed accessory "${previous}" → "${name}"`);
     }
-    /** Unregister cached accessories that no longer match the configured target. */
-    removeStaleAccessories(keepUuid) {
-        const stale = this.accessories.filter((accessory) => accessory.UUID !== keepUuid);
+    /** Unregister cached accessories that are no longer in the configured set. */
+    removeStaleAccessories(keepUuids) {
+        const stale = this.accessories.filter((accessory) => !keepUuids.has(accessory.UUID));
         if (stale.length === 0) {
             return;
         }
@@ -165,19 +185,21 @@ class ConcertPlatform {
             this.log.info(`Removing stale accessory: ${accessory.displayName}`);
         }
         this.api.unregisterPlatformAccessories(settings_1.PLUGIN_NAME, settings_1.PLATFORM_NAME, stale);
-        this.accessories.splice(0, this.accessories.length, ...this.accessories.filter((a) => a.UUID === keepUuid));
+        this.accessories.splice(0, this.accessories.length, ...this.accessories.filter((accessory) => keepUuids.has(accessory.UUID)));
     }
     startPolling() {
         if (this.pollTimer) {
             clearInterval(this.pollTimer);
         }
         const refreshSec = (0, utils_1.resolveRefreshRateSec)(this.config.options?.refreshRate, settings_1.DEFAULT_REFRESH_RATE_SEC);
-        this.log.info(`Polling power state every ${refreshSec}s`);
+        this.log.info(`Polling accessory state every ${refreshSec}s`);
         this.pollTimer = setInterval(() => {
-            if (this.stopped || !this.handler) {
+            if (this.stopped || this.handlers.length === 0) {
                 return;
             }
-            void this.handler.refresh();
+            for (const handler of this.handlers) {
+                void handler.refresh();
+            }
         }, refreshSec * 1000);
     }
 }

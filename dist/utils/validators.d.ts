@@ -7,7 +7,7 @@
  * @fileoverview Configuration validation. Validates the Homebridge platform
  * config at startup so misconfiguration fails fast with an actionable message.
  */
-import type { ConcertPlatformConfig } from '../types';
+import type { ConcertPlatformConfig, ResolvedAccessory } from '../types';
 /**
  * Outcome of validating the platform config.
  *
@@ -25,13 +25,23 @@ export interface ConfigValidationResult {
  * silently fail later in `net.createConnection`.
  */
 export declare function isValidHost(value: string): boolean;
+/** Stable identity key used for duplicate detection and UUID generation. */
+export declare function accessoryIdentityKey(accessory: ResolvedAccessory): string;
 /**
  * Validate the platform config.
  *
- * Fatal: missing/invalid `host`. Non-fatal: out-of-range `port`, `zone`, or
- * `refreshRate` — those produce warnings and fall back/clamp via the resolvers.
+ * Fatal: missing/invalid `host`, missing/invalid `accessories`.
+ * Non-fatal: out-of-range `port` or `refreshRate` — those produce warnings and
+ * fall back/clamp via the resolvers.
  */
 export declare function validateConfig(config: ConcertPlatformConfig | undefined): ConfigValidationResult;
+/**
+ * Resolve and validate accessories after `validateConfig` has reported no errors.
+ *
+ * Zone defaults to 1 when omitted or invalid (invalid zone already fatal when
+ * validating entries that set an explicit bad zone).
+ */
+export declare function resolveAccessories(config: ConcertPlatformConfig): ResolvedAccessory[];
 /** Resolve a usable TCP port, falling back to the AudioControl default. */
 export declare function resolvePort(port: number | undefined): number;
 /** Resolve a usable zone number (1 or 2). */

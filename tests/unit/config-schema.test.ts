@@ -15,13 +15,26 @@ describe('config.schema.json', () => {
     expect(schema.singular).toBe(true)
   })
 
-  it('requires name and host', () => {
-    expect(schema.schema.required).toEqual(expect.arrayContaining(['name', 'host']))
+  it('requires name, host, and accessories', () => {
+    expect(schema.schema.required).toEqual(expect.arrayContaining(['name', 'host', 'accessories']))
   })
 
   it('defaults the control port to 50000 and refreshRate to 90', () => {
     expect(schema.schema.properties.port.default).toBe(50_000)
     expect(schema.schema.properties.options.properties.refreshRate.default).toBe(90)
+  })
+
+  it('defines accessories as an array of typed switches', () => {
+    const accessories = schema.schema.properties.accessories
+    expect(accessories.type).toBe('array')
+    expect(accessories.minItems).toBe(1)
+    expect(accessories.items.required).toEqual(expect.arrayContaining(['type', 'name']))
+    expect(accessories.items.properties.type.oneOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ enum: ['power'] }),
+        expect.objectContaining({ enum: ['volumePreset'] }),
+      ]),
+    )
   })
 
   it('uses editable integer fields (no min/max sliders) for port and refreshRate', () => {
@@ -37,6 +50,7 @@ describe('config.schema.json', () => {
     expect(schema.form).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: 'port', type: 'integer' }),
       expect.objectContaining({ key: 'options.refreshRate', type: 'integer' }),
+      expect.objectContaining({ key: 'accessories', type: 'array' }),
     ]))
   })
 

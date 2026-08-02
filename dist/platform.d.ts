@@ -9,8 +9,8 @@
 import type { API, Characteristic as CharacteristicClass, DynamicPlatformPlugin, Logging, PlatformAccessory, Service as ServiceClass } from 'homebridge';
 import type { ConcertPlatformConfig } from './types';
 /**
- * Registers a single Switch accessory for the configured Concert receiver
- * and polls its power state on a timer.
+ * Registers configured Switch accessories for a Concert receiver and polls
+ * their state on a shared timer.
  */
 export default class ConcertPlatform implements DynamicPlatformPlugin {
     readonly log: Logging;
@@ -19,7 +19,7 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     readonly Characteristic: typeof CharacteristicClass;
     readonly accessories: PlatformAccessory[];
     private readonly config;
-    private handler?;
+    private readonly handlers;
     private client?;
     private pollTimer?;
     private stopped;
@@ -39,10 +39,12 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
      */
     private clearCachedAccessories;
     /**
-     * Create or update the Switch accessory for the configured receiver and start
-     * polling power state.
+     * Create or update Switch accessories for each configured entry and start
+     * polling their state.
      */
     private discoverDevices;
+    private createHandler;
+    private uuidFor;
     /**
      * Sync the accessory display name onto the PlatformAccessory wrapper and the
      * underlying HAP accessory. Assigning `displayName` alone does not update what
@@ -50,7 +52,7 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
      * when available (Homebridge ≥1.8).
      */
     private applyAccessoryDisplayName;
-    /** Unregister cached accessories that no longer match the configured target. */
+    /** Unregister cached accessories that are no longer in the configured set. */
     private removeStaleAccessories;
     private startPolling;
 }

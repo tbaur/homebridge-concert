@@ -24,7 +24,7 @@ This plugin implements:
 
 - **LAN-only control** - The plugin opens short-lived TCP connections only to the host/port you configure; it does not call any cloud API
 - **No credential storage** - There are no passwords, tokens, or API keys to store or refresh
-- **Input validation** - Configuration is validated at startup. A missing or invalid `host` is fatal (the plugin does not start and clears cached accessories). Out-of-range `port`, `zone`, and `refreshRate` values produce a warning and fall back to a safe default or clamp
+- **Input validation** - Configuration is validated at startup. Missing/invalid `host` or `accessories` is fatal (the plugin does not start and clears cached accessories). Invalid accessory entries (type, zone, volume) are fatal. Out-of-range `port` and `refreshRate` values produce a warning and fall back to a safe default or clamp
 - **Request timeouts** - Connect and command waits are bounded so a stalled receiver cannot hang the event loop
 - **Response size cap** - TCP response buffers are capped to avoid unbounded memory growth from a misbehaving peer
 - **Dependency auditing** - `npm audit` runs in CI on every push and pull request
@@ -35,12 +35,13 @@ This plugin implements:
 2. Keep Homebridge and this plugin updated
 3. Run Homebridge with minimal system privileges
 4. Use Homebridge's secure remote access features rather than exposing it directly to the internet
-5. Remember that anyone on your LAN who can reach TCP port 50000 can send the same power commands
+5. Remember that anyone on your LAN who can reach TCP port 50000 can send the same automation commands (power, volume, and anything else the protocol accepts)
+6. Choose volume-preset levels carefully — turning a preset On sets an absolute level on the receiver
 
 ## Configuration Handling
 
-- `host`, `port`, and related options are read from the Homebridge platform config. Homebridge stores this config in plain text on the host, so host hardening is the primary mitigation.
-- No credentials or personally identifying information are written to logs. Debug logs may include hex dumps of automation frames (power on/off/query), which contain no secrets.
+- `host`, `port`, `accessories`, and related options are read from the Homebridge platform config. Homebridge stores this config in plain text on the host, so host hardening is the primary mitigation.
+- No credentials or personally identifying information are written to logs. Debug logs may include hex dumps of automation frames (power/volume query and set), which contain no secrets.
 
 ## Response Timeline
 

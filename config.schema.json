@@ -2,11 +2,11 @@
   "pluginAlias": "Concert",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Homebridge plugin for AudioControl Concert XR receivers. Powers the unit on/off over the LAN IP control port (default 50000). On the receiver, set **Control** to **IP** and **Standby Mode** to **IP and HDMI ON** so the unit remains reachable while in standby.",
-  "footerDisplay": "For help, see the [README](https://github.com/tbaur/homebridge-concert#readme).",
+  "headerDisplay": "Homebridge plugin for AudioControl Concert XR receivers. Expose power and volume-preset switches over the LAN IP control port (default 50000). On the receiver, set **Control** to **IP** and **Standby Mode** to **IP and HDMI ON** so the unit remains reachable while in standby.",
+  "footerDisplay": "For help, see the [README](https://github.com/tbaur/homebridge-concert#readme). Protocol details for contributors: [docs/PROTOCOL.md](https://github.com/tbaur/homebridge-concert/blob/main/docs/PROTOCOL.md).",
   "schema": {
     "type": "object",
-    "required": ["name", "host"],
+    "required": ["name", "host", "accessories"],
     "properties": {
       "name": {
         "title": "Name",
@@ -27,27 +27,55 @@
         "placeholder": "50000",
         "description": "TCP port for IP automation control. Default is 50000. Out-of-range values fall back to 50000 at startup."
       },
-      "accessoryName": {
-        "title": "Accessory Name",
-        "type": "string",
-        "placeholder": "Theater AVR",
-        "description": "Optional HomeKit display name for the power switch. Defaults to the platform name."
-      },
-      "zone": {
-        "title": "Zone",
-        "type": "integer",
-        "default": 1,
-        "oneOf": [
-          { "title": "Zone 1 (Main)", "enum": [1] },
-          { "title": "Zone 2", "enum": [2] }
-        ],
-        "description": "Which zone to power. Zone 1 is the main/master zone."
-      },
       "model": {
         "title": "Model",
         "type": "string",
         "default": "Concert XR-8S",
         "description": "Optional model name shown in HomeKit Accessory Information."
+      },
+      "accessories": {
+        "title": "Accessories",
+        "type": "array",
+        "minItems": 1,
+        "description": "HomeKit switches to expose. Add a power switch and optional volume-preset switches (On = at that level).",
+        "items": {
+          "type": "object",
+          "required": ["type", "name"],
+          "properties": {
+            "type": {
+              "title": "Type",
+              "type": "string",
+              "default": "power",
+              "oneOf": [
+                { "title": "Power (on / standby)", "enum": ["power"] },
+                { "title": "Volume preset", "enum": ["volumePreset"] }
+              ],
+              "description": "Power toggles standby. Volume preset is On when the zone volume equals the configured level."
+            },
+            "name": {
+              "title": "Name",
+              "type": "string",
+              "placeholder": "XR-8S",
+              "description": "HomeKit display name for this switch."
+            },
+            "zone": {
+              "title": "Zone",
+              "type": "integer",
+              "default": 1,
+              "oneOf": [
+                { "title": "Zone 1 (Main)", "enum": [1] },
+                { "title": "Zone 2", "enum": [2] }
+              ],
+              "description": "Which zone this accessory controls."
+            },
+            "volume": {
+              "title": "Volume Level",
+              "type": "integer",
+              "placeholder": "57",
+              "description": "Required for volume preset (0–99). Ignored for power accessories."
+            }
+          }
+        }
       },
       "options": {
         "type": "object",
@@ -57,7 +85,7 @@
             "type": "integer",
             "default": 90,
             "placeholder": "90",
-            "description": "How often to poll the receiver for power state. Default 90 seconds. Values below 5 fall back to 90; values above 86400 are clamped."
+            "description": "How often to poll the receiver for accessory state. Default 90 seconds. Values below 5 fall back to 90; values above 86400 are clamped."
           }
         }
       }
@@ -70,9 +98,24 @@
       "key": "port",
       "type": "integer"
     },
-    "accessoryName",
-    "zone",
     "model",
+    {
+      "key": "accessories",
+      "type": "array",
+      "orderable": true,
+      "items": [
+        "type",
+        "name",
+        "zone",
+        {
+          "key": "volume",
+          "type": "integer",
+          "condition": {
+            "functionBody": "try { return model.accessories[arrayIndices[0]].type === 'volumePreset'; } catch (e) { return false; }"
+          }
+        }
+      ]
+    },
     {
       "key": "options.refreshRate",
       "type": "integer"

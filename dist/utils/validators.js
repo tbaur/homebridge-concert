@@ -10,7 +10,9 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isValidHost = isValidHost;
+exports.accessoryIdentityKey = accessoryIdentityKey;
 exports.validateConfig = validateConfig;
+exports.resolveAccessories = resolveAccessories;
 exports.resolvePort = resolvePort;
 exports.resolveZone = resolveZone;
 exports.resolveRefreshRateSec = resolveRefreshRateSec;
@@ -41,11 +43,22 @@ function isValidHost(value) {
     }
     return true;
 }
+function isAccessoryKind(value) {
+    return value === 'power' || value === 'volumePreset';
+}
+/** Stable identity key used for duplicate detection and UUID generation. */
+function accessoryIdentityKey(accessory) {
+    if (accessory.kind === 'volumePreset') {
+        return `z${accessory.zone}:vol:${accessory.volume}`;
+    }
+    return `z${accessory.zone}:power`;
+}
 /**
  * Validate the platform config.
  *
- * Fatal: missing/invalid `host`. Non-fatal: out-of-range `port`, `zone`, or
- * `refreshRate` — those produce warnings and fall back/clamp via the resolvers.
+ * Fatal: missing/invalid `host`, missing/invalid `accessories`.
+ * Non-fatal: out-of-range `port` or `refreshRate` — those produce warnings and
+ * fall back/clamp via the resolvers.
  */
 function validateConfig(config) {
     const errors = [];
@@ -65,11 +78,6 @@ function validateConfig(config) {
             warnings.push(`port ${String(config.port)} is invalid; using default ${settings_1.DEFAULT_CONTROL_PORT}.`);
         }
     }
-    if (config.zone !== undefined) {
-        if (!Number.isInteger(config.zone) || (config.zone !== 1 && config.zone !== 2)) {
-            warnings.push(`zone ${String(config.zone)} is invalid; using default ${settings_1.DEFAULT_ZONE}.`);
-        }
-    }
     const refreshRate = config.options?.refreshRate;
     if (refreshRate !== undefined) {
         if (typeof refreshRate !== 'number' || !Number.isInteger(refreshRate) || Number.isNaN(refreshRate)) {
@@ -83,7 +91,90 @@ function validateConfig(config) {
             warnings.push(`options.refreshRate ${refreshRate}s is above the ${settings_1.MAX_REFRESH_RATE_SEC}s maximum; it will be clamped.`);
         }
     }
+    if (!Array.isArray(config.accessories) || config.accessories.length === 0) {
+        errors.push('accessories is required and must contain at least one entry.');
+    }
+    else {
+        const seen = new Set();
+        config.accessories.forEach((entry, index) => {
+            const label = `accessories[${index}]`;
+            const resolved = tryResolveAccessory(entry, label, errors);
+            if (!resolved) {
+                return;
+            }
+            const key = accessoryIdentityKey(resolved);
+            if (seen.has(key)) {
+                errors.push(`${label} duplicates another accessory (${key}).`);
+            }
+            else {
+                seen.add(key);
+            }
+        });
+    }
     return { errors, warnings };
+}
+/**
+ * Resolve and validate accessories after `validateConfig` has reported no errors.
+ *
+ * Zone defaults to 1 when omitted or invalid (invalid zone already fatal when
+ * validating entries that set an explicit bad zone).
+ */
+function resolveAccessories(config) {
+    const errors = [];
+    const resolved = [];
+    for (const [index, entry] of (config.accessories ?? []).entries()) {
+        const accessory = tryResolveAccessory(entry, `accessories[${index}]`, errors);
+        if (accessory) {
+            resolved.push(accessory);
+        }
+    }
+    if (errors.length > 0) {
+        throw new Error(errors.join(' '));
+    }
+    return resolved;
+}
+function tryResolveAccessory(entry, label, errors) {
+    if (!entry || typeof entry !== 'object') {
+        errors.push(`${label} must be an object.`);
+        return undefined;
+    }
+    if (!isAccessoryKind(entry.type)) {
+        errors.push(`${label}.type must be "power" or "volumePreset".`);
+        return undefined;
+    }
+    if (!isNonEmptyString(entry.name)) {
+        errors.push(`${label}.name is required.`);
+        return undefined;
+    }
+    let zone = settings_1.DEFAULT_ZONE;
+    if (entry.zone !== undefined) {
+        if (entry.zone !== 1 && entry.zone !== 2) {
+            errors.push(`${label}.zone must be 1 or 2.`);
+            return undefined;
+        }
+        zone = entry.zone;
+    }
+    if (entry.type === 'power') {
+        return {
+            kind: 'power',
+            name: entry.name.trim(),
+            zone,
+        };
+    }
+    if (typeof entry.volume !== 'number'
+        || !Number.isInteger(entry.volume)
+        || entry.volume < settings_1.MIN_VOLUME
+        || entry.volume > settings_1.MAX_VOLUME) {
+        errors.push(`${label}.volume is required for volumePreset and must be an integer `
+            + `${settings_1.MIN_VOLUME}–${settings_1.MAX_VOLUME}.`);
+        return undefined;
+    }
+    return {
+        kind: 'volumePreset',
+        name: entry.name.trim(),
+        zone,
+        volume: entry.volume,
+    };
 }
 /** Resolve a usable TCP port, falling back to the AudioControl default. */
 function resolvePort(port) {

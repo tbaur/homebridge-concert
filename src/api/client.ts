@@ -29,12 +29,16 @@ import {
   ANSWER_OK,
   COMMAND_POWER,
   COMMAND_RC5,
+  COMMAND_VOLUME,
   buildPowerOn,
   buildPowerQuery,
   buildPowerStandby,
+  buildVolumeQuery,
+  buildVolumeSet,
   describeAnswerCode,
   formatFrame,
   isPowerOn,
+  parseVolume,
   tryParseResponse,
   type ProtocolResponse,
 } from './protocol'
@@ -45,6 +49,7 @@ const POWER_SET_RESPONSE_COMMANDS: readonly number[] = [COMMAND_RC5, COMMAND_POW
 export interface ConcertClientOptions {
   host: string
   port?: number
+  /** Default zone when a method is called without an explicit zone. */
   zone?: number
   connectTimeoutMs?: number
   requestTimeoutMs?: number
@@ -59,41 +64,48 @@ export interface ConcertClientOptions {
 export class ConcertClient {
   private readonly host: string
   private readonly port: number
-  private readonly zone: number
+  private readonly defaultZone: number
   private readonly connectTimeoutMs: number
   private readonly requestTimeoutMs: number
   private readonly log: PluginLogger
   private readonly createConnection: typeof net.createConnection
+  /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
+  private readonly volumeQueryInFlight = new Map<number, Promise<number>>()
 
   constructor(options: ConcertClientOptions) {
     this.host = options.host
     this.port = options.port ?? DEFAULT_CONTROL_PORT
-    this.zone = options.zone ?? DEFAULT_ZONE
+    this.defaultZone = options.zone ?? DEFAULT_ZONE
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.log = options.logger ?? {}
     this.createConnection = options.createConnection ?? net.createConnection
   }
 
+  private resolveZone(zone?: number): number {
+    return zone === 1 || zone === 2 ? zone : this.defaultZone
+  }
+
   /**
-   * Query whether the configured zone is powered on.
-   *
-   * Retries once on ConnectionError — XR units sometimes accept TCP then
-   * stay silent for a single request before answering normally.
+   * Retry a ConnectionError once — XR units sometimes accept TCP then stay
+   * silent for a single request before answering normally.
    */
-  async getPowerState(): Promise<boolean> {
+  private async withQueryRetry<T>(
+    operation: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
     const attempts = 1 + POWER_QUERY_RETRIES
     let lastError: unknown
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
-        return await this.queryPowerOnce()
+        return await run()
       } catch (error) {
         lastError = error
         if (!(error instanceof ConnectionError) || attempt >= attempts) {
           throw error
         }
         this.log.debug?.(
-          `Power query failed (${error.message}); retrying `
+          `${operation} failed (${error.message}); retrying `
           + `(${attempt}/${POWER_QUERY_RETRIES})`,
         )
         await sleep(POWER_QUERY_RETRY_MS)
@@ -102,21 +114,36 @@ export class ConcertClient {
     throw lastError
   }
 
-  private async queryPowerOnce(): Promise<boolean> {
-    const response = await this.send(buildPowerQuery(this.zone), COMMAND_POWER)
-    this.assertOk(response, 'power query')
-    return isPowerOn(response.data)
+  /**
+   * Query whether the zone is powered on.
+   *
+   * Retries once on ConnectionError — XR units sometimes accept TCP then
+   * stay silent for a single request before answering normally.
+   */
+  async getPowerState(zone?: number): Promise<boolean> {
+    const resolvedZone = this.resolveZone(zone)
+    return this.withQueryRetry('Power query', async () => {
+      const response = await this.send(buildPowerQuery(resolvedZone), COMMAND_POWER, resolvedZone)
+      this.assertOk(response, 'power query')
+      return isPowerOn(response.data)
+    })
   }
 
-  /** Power the configured zone on (discrete RC5 Power On). */
-  async powerOn(): Promise<void> {
-    const response = await this.send(buildPowerOn(this.zone), POWER_SET_RESPONSE_COMMANDS)
+  /** Power the zone on (discrete RC5 Power On). */
+  async powerOn(zone?: number): Promise<void> {
+    const resolvedZone = this.resolveZone(zone)
+    const response = await this.send(buildPowerOn(resolvedZone), POWER_SET_RESPONSE_COMMANDS, resolvedZone)
     this.assertOk(response, 'power on')
   }
 
-  /** Put the configured zone into standby (discrete RC5 Power Off). */
-  async powerStandby(): Promise<void> {
-    const response = await this.send(buildPowerStandby(this.zone), POWER_SET_RESPONSE_COMMANDS)
+  /** Put the zone into standby (discrete RC5 Power Off). */
+  async powerStandby(zone?: number): Promise<void> {
+    const resolvedZone = this.resolveZone(zone)
+    const response = await this.send(
+      buildPowerStandby(resolvedZone),
+      POWER_SET_RESPONSE_COMMANDS,
+      resolvedZone,
+    )
     this.assertOk(response, 'standby')
   }
 
@@ -127,12 +154,13 @@ export class ConcertClient {
    * stays open until our timeout). When the ack is missing, settle briefly and
    * confirm via Power query before failing the HomeKit write.
    */
-  async setPower(on: boolean): Promise<void> {
+  async setPower(on: boolean, zone?: number): Promise<void> {
+    const resolvedZone = this.resolveZone(zone)
     try {
       if (on) {
-        await this.powerOn()
+        await this.powerOn(resolvedZone)
       } else {
-        await this.powerStandby()
+        await this.powerStandby(resolvedZone)
       }
     } catch (error) {
       if (!(error instanceof ConnectionError)) {
@@ -141,7 +169,58 @@ export class ConcertClient {
       this.log.debug?.(
         `Power ${on ? 'on' : 'standby'} ack missing (${error.message}); verifying state`,
       )
-      if (await this.verifyPowerState(on)) {
+      if (await this.verifyPowerState(on, resolvedZone)) {
+        return
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Query the absolute volume level (0–99) for the zone.
+   *
+   * Concurrent callers for the same zone share one in-flight query so a poll
+   * tick with multiple volume-preset accessories does not open N sockets.
+   * Retries once on ConnectionError (same as power query).
+   */
+  async getVolume(zone?: number): Promise<number> {
+    const resolvedZone = this.resolveZone(zone)
+    const existing = this.volumeQueryInFlight.get(resolvedZone)
+    if (existing) {
+      return existing
+    }
+
+    const pending = this.withQueryRetry('Volume query', async () => {
+      const response = await this.send(buildVolumeQuery(resolvedZone), COMMAND_VOLUME, resolvedZone)
+      this.assertOk(response, 'volume query')
+      return parseVolume(response.data)
+    }).finally(() => {
+      this.volumeQueryInFlight.delete(resolvedZone)
+    })
+
+    this.volumeQueryInFlight.set(resolvedZone, pending)
+    return pending
+  }
+
+  /**
+   * Set the absolute volume level (0–99) for the zone.
+   *
+   * When the set ack is missing (ConnectionError), settle and confirm via
+   * volume query before failing — matching power-set resilience.
+   */
+  async setVolume(level: number, zone?: number): Promise<void> {
+    const resolvedZone = this.resolveZone(zone)
+    try {
+      const response = await this.send(buildVolumeSet(resolvedZone, level), COMMAND_VOLUME, resolvedZone)
+      this.assertOk(response, 'volume set')
+    } catch (error) {
+      if (!(error instanceof ConnectionError)) {
+        throw error
+      }
+      this.log.debug?.(
+        `Volume set ack missing (${error.message}); verifying level ${level}`,
+      )
+      if (await this.verifyVolumeLevel(level, resolvedZone)) {
         return
       }
       throw error
@@ -149,11 +228,11 @@ export class ConcertClient {
   }
 
   /** True when a power query reports the desired on/off state. */
-  private async verifyPowerState(expectedOn: boolean): Promise<boolean> {
+  private async verifyPowerState(expectedOn: boolean, zone: number): Promise<boolean> {
     for (let attempt = 0; attempt < POWER_VERIFY_ATTEMPTS; attempt++) {
       await sleep(POWER_SETTLE_MS)
       try {
-        const actual = await this.getPowerState()
+        const actual = await this.getPowerState(zone)
         if (actual === expectedOn) {
           this.log.debug?.(
             `Power state verified as ${expectedOn ? 'on' : 'standby'} after missing ack`,
@@ -163,6 +242,26 @@ export class ConcertClient {
       } catch (verifyError) {
         const message = verifyError instanceof Error ? verifyError.message : String(verifyError)
         this.log.debug?.(`Power verify attempt ${attempt + 1} failed: ${message}`)
+      }
+    }
+    return false
+  }
+
+  /** True when a volume query reports the desired level. */
+  private async verifyVolumeLevel(expectedLevel: number, zone: number): Promise<boolean> {
+    for (let attempt = 0; attempt < POWER_VERIFY_ATTEMPTS; attempt++) {
+      await sleep(POWER_SETTLE_MS)
+      try {
+        const actual = await this.getVolume(zone)
+        if (actual === expectedLevel) {
+          this.log.debug?.(
+            `Volume verified as ${expectedLevel} after missing ack`,
+          )
+          return true
+        }
+      } catch (verifyError) {
+        const message = verifyError instanceof Error ? verifyError.message : String(verifyError)
+        this.log.debug?.(`Volume verify attempt ${attempt + 1} failed: ${message}`)
       }
     }
     return false
@@ -182,9 +281,14 @@ export class ConcertClient {
    *
    * @param expectedCommands - Accept the first response whose command is in this list
    *   (RC5 set may reply with 0x08, and often also emits a Power 0x00 status)
+   * @param zone - Zone expected on matching response frames
    */
-  private send(request: Buffer, expectedCommands: number | readonly number[]): Promise<ProtocolResponse> {
-    const { host, port, zone } = this
+  private send(
+    request: Buffer,
+    expectedCommands: number | readonly number[],
+    zone: number,
+  ): Promise<ProtocolResponse> {
+    const { host, port } = this
     const accepted = Array.isArray(expectedCommands) ? expectedCommands : [expectedCommands]
     this.log.debug?.(`→ ${host}:${port} ${formatFrame(request)}`)
 

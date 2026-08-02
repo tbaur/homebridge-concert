@@ -17,24 +17,31 @@ import type {
 } from 'homebridge'
 
 import { ConcertClient } from './api'
-import { ReceiverAccessory } from './devices/receiver'
+import { PowerAccessory, VolumePresetAccessory } from './devices'
 import {
+  DEFAULT_MODEL,
   DEFAULT_REFRESH_RATE_SEC,
   PLATFORM_NAME,
   PLUGIN_NAME,
   UUID_PREFIX,
 } from './settings'
-import type { ConcertPlatformConfig, ReceiverContext } from './types'
+import type {
+  AccessoryContext,
+  ConcertPlatformConfig,
+  RefreshableAccessory,
+  ResolvedAccessory,
+} from './types'
 import {
+  accessoryIdentityKey,
+  resolveAccessories,
   resolvePort,
   resolveRefreshRateSec,
-  resolveZone,
   validateConfig,
 } from './utils'
 
 /**
- * Registers a single Switch accessory for the configured Concert receiver
- * and polls its power state on a timer.
+ * Registers configured Switch accessories for a Concert receiver and polls
+ * their state on a shared timer.
  */
 export default class ConcertPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof ServiceClass
@@ -42,7 +49,7 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   public readonly accessories: PlatformAccessory[] = []
 
   private readonly config: ConcertPlatformConfig
-  private handler?: ReceiverAccessory
+  private readonly handlers: RefreshableAccessory[] = []
   private client?: ConcertClient
   private pollTimer?: ReturnType<typeof setInterval>
   private stopped = false
@@ -124,47 +131,83 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   }
 
   /**
-   * Create or update the Switch accessory for the configured receiver and start
-   * polling power state.
+   * Create or update Switch accessories for each configured entry and start
+   * polling their state.
    */
   private discoverDevices(): void {
     const host = this.config.host.trim()
     const port = resolvePort(this.config.port)
-    const zone = resolveZone(this.config.zone)
-    const model = (this.config.model?.trim() || 'Concert XR-8S')
-    const displayName = (this.config.accessoryName?.trim() || this.config.name?.trim() || PLATFORM_NAME)
+    const model = (this.config.model?.trim() || DEFAULT_MODEL)
+    const resolved = resolveAccessories(this.config)
 
-    const context: ReceiverContext = { host, port, zone, model }
-    const uuid = this.api.hap.uuid.generate(`${UUID_PREFIX}${host}:${port}:z${zone}`)
-
-    // Always drop accessories that no longer match the configured target.
-    this.removeStaleAccessories(uuid)
-
-    let accessory = this.accessories.find((cached) => cached.UUID === uuid)
-    if (!accessory) {
-      this.log.info(`Registering accessory "${displayName}" at ${host}:${port} (zone ${zone})`)
-      accessory = new this.api.platformAccessory(displayName, uuid)
-      accessory.context = context
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory])
-      this.accessories.push(accessory)
-    } else {
-      accessory.context = context
-      this.applyAccessoryDisplayName(accessory, displayName)
-      this.api.updatePlatformAccessories([accessory])
-      this.log.info(`Restored accessory "${displayName}" at ${host}:${port} (zone ${zone})`)
-    }
+    const keepUuids = new Set(
+      resolved.map((accessory) => this.uuidFor(host, port, accessory)),
+    )
+    this.removeStaleAccessories(keepUuids)
 
     this.client = new ConcertClient({
       host,
       port,
-      zone,
       logger: this.log,
     })
-    this.handler = new ReceiverAccessory(this, accessory, this.client)
+    this.handlers.length = 0
+
+    for (const accessoryConfig of resolved) {
+      const uuid = this.uuidFor(host, port, accessoryConfig)
+      const context: AccessoryContext = {
+        kind: accessoryConfig.kind,
+        host,
+        port,
+        zone: accessoryConfig.zone,
+        model,
+        volume: accessoryConfig.volume,
+      }
+
+      let accessory = this.accessories.find((cached) => cached.UUID === uuid)
+      if (!accessory) {
+        this.log.info(
+          `Registering accessory "${accessoryConfig.name}" `
+          + `(${accessoryIdentityKey(accessoryConfig)}) at ${host}:${port}`,
+        )
+        accessory = new this.api.platformAccessory(accessoryConfig.name, uuid)
+        accessory.context = context
+        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory])
+        this.accessories.push(accessory)
+      } else {
+        accessory.context = context
+        this.applyAccessoryDisplayName(accessory, accessoryConfig.name)
+        this.api.updatePlatformAccessories([accessory])
+        this.log.info(
+          `Restored accessory "${accessoryConfig.name}" `
+          + `(${accessoryIdentityKey(accessoryConfig)}) at ${host}:${port}`,
+        )
+      }
+
+      this.handlers.push(this.createHandler(accessoryConfig, accessory, this.client))
+    }
+
     this.startPolling()
 
-    // Immediate refresh so HomeKit has a real value shortly after launch.
-    void this.handler.refresh()
+    for (const handler of this.handlers) {
+      void handler.refresh()
+    }
+  }
+
+  private createHandler(
+    config: ResolvedAccessory,
+    accessory: PlatformAccessory,
+    client: ConcertClient,
+  ): RefreshableAccessory {
+    if (config.kind === 'power') {
+      return new PowerAccessory(this, accessory, client)
+    }
+    return new VolumePresetAccessory(this, accessory, client)
+  }
+
+  private uuidFor(host: string, port: number, accessory: ResolvedAccessory): string {
+    return this.api.hap.uuid.generate(
+      `${UUID_PREFIX}${host}:${port}:${accessoryIdentityKey(accessory)}`,
+    )
   }
 
   /**
@@ -192,9 +235,9 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     this.log.info(`Renamed accessory "${previous}" → "${name}"`)
   }
 
-  /** Unregister cached accessories that no longer match the configured target. */
-  private removeStaleAccessories(keepUuid: string): void {
-    const stale = this.accessories.filter((accessory) => accessory.UUID !== keepUuid)
+  /** Unregister cached accessories that are no longer in the configured set. */
+  private removeStaleAccessories(keepUuids: Set<string>): void {
+    const stale = this.accessories.filter((accessory) => !keepUuids.has(accessory.UUID))
     if (stale.length === 0) {
       return
     }
@@ -202,7 +245,11 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
       this.log.info(`Removing stale accessory: ${accessory.displayName}`)
     }
     this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale)
-    this.accessories.splice(0, this.accessories.length, ...this.accessories.filter((a) => a.UUID === keepUuid))
+    this.accessories.splice(
+      0,
+      this.accessories.length,
+      ...this.accessories.filter((accessory) => keepUuids.has(accessory.UUID)),
+    )
   }
 
   private startPolling(): void {
@@ -213,12 +260,14 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
       this.config.options?.refreshRate,
       DEFAULT_REFRESH_RATE_SEC,
     )
-    this.log.info(`Polling power state every ${refreshSec}s`)
+    this.log.info(`Polling accessory state every ${refreshSec}s`)
     this.pollTimer = setInterval(() => {
-      if (this.stopped || !this.handler) {
+      if (this.stopped || this.handlers.length === 0) {
         return
       }
-      void this.handler.refresh()
+      for (const handler of this.handlers) {
+        void handler.refresh()
+      }
     }, refreshSec * 1000)
   }
 }
