@@ -87,7 +87,7 @@ describe('VolumePresetAccessory', () => {
   it('sets volume when turned On', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = {
-      setVolume: jest.fn().mockResolvedValue(undefined),
+      setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn(),
     } as unknown as ConcertClient
 
@@ -95,15 +95,19 @@ describe('VolumePresetAccessory', () => {
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
     await setHandler(true)
 
-    expect(client.setVolume).toHaveBeenCalledWith(57, 1)
+    expect(client.setVolumeWhenReady).toHaveBeenCalledWith(
+      57,
+      1,
+      expect.objectContaining({ onWaiting: expect.any(Function) }),
+    )
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: SET 57')
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
   })
 
-  it('skips setVolume when already at the preset', async () => {
+  it('skips setVolumeWhenReady when already at the preset', async () => {
     const { platform, accessory, onChar } = createPlatform()
     const client = {
-      setVolume: jest.fn().mockResolvedValue(undefined),
+      setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn().mockResolvedValue(57),
     } as unknown as ConcertClient
 
@@ -113,15 +117,15 @@ describe('VolumePresetAccessory', () => {
     await setHandler(true)
     await setHandler(true)
 
-    expect(client.setVolume).not.toHaveBeenCalled()
+    expect(client.setVolumeWhenReady).not.toHaveBeenCalled()
     expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S Volume: SET 57')
   })
 
-  it('single-flights concurrent On writes into one setVolume', async () => {
+  it('single-flights concurrent On writes into one setVolumeWhenReady', async () => {
     const { platform, accessory, onChar } = createPlatform()
     let resolveSet: (() => void) | undefined
     const client = {
-      setVolume: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+      setVolumeWhenReady: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
         resolveSet = resolve
       })),
       getVolume: jest.fn(),
@@ -133,10 +137,10 @@ describe('VolumePresetAccessory', () => {
     const second = setHandler(true)
     const third = setHandler(true)
 
-    expect(client.setVolume).toHaveBeenCalledTimes(1)
+    expect(client.setVolumeWhenReady).toHaveBeenCalledTimes(1)
     resolveSet?.()
     await Promise.all([first, second, third])
-    expect(client.setVolume).toHaveBeenCalledTimes(1)
+    expect(client.setVolumeWhenReady).toHaveBeenCalledTimes(1)
     expect(platform.log.info).toHaveBeenCalledTimes(1)
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: SET 57')
   })
@@ -144,7 +148,7 @@ describe('VolumePresetAccessory', () => {
   it('does not re-set after a successful On when HomeKit repeats the write', async () => {
     const { platform, accessory, onChar } = createPlatform()
     const client = {
-      setVolume: jest.fn().mockResolvedValue(undefined),
+      setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn(),
     } as unknown as ConcertClient
 
@@ -154,14 +158,14 @@ describe('VolumePresetAccessory', () => {
     await setHandler(true)
     await setHandler(true)
 
-    expect(client.setVolume).toHaveBeenCalledTimes(1)
+    expect(client.setVolumeWhenReady).toHaveBeenCalledTimes(1)
     expect(platform.log.info).toHaveBeenCalledTimes(1)
   })
 
   it('treats Off as a no-op and snaps the characteristic back', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = {
-      setVolume: jest.fn().mockResolvedValue(undefined),
+      setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn().mockResolvedValue(57),
     } as unknown as ConcertClient
 
@@ -170,14 +174,14 @@ describe('VolumePresetAccessory', () => {
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
     await setHandler(false)
 
-    expect(client.setVolume).not.toHaveBeenCalled()
+    expect(client.setVolumeWhenReady).not.toHaveBeenCalled()
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
   })
 
   it('reports On only when polled volume matches the target', async () => {
     const { platform, accessory, switchService } = createPlatform()
     const client = {
-      setVolume: jest.fn(),
+      setVolumeWhenReady: jest.fn(),
       getVolume: jest.fn()
         .mockResolvedValueOnce(40)
         .mockResolvedValueOnce(57),
@@ -197,7 +201,7 @@ describe('VolumePresetAccessory', () => {
   it('marks Off when volume poll fails after being On', async () => {
     const { platform, accessory, switchService } = createPlatform()
     const client = {
-      setVolume: jest.fn(),
+      setVolumeWhenReady: jest.fn(),
       getVolume: jest.fn()
         .mockResolvedValueOnce(57)
         .mockRejectedValueOnce(new Error('standby')),
@@ -213,10 +217,10 @@ describe('VolumePresetAccessory', () => {
     )
   })
 
-  it('reverts and throws HapStatusError when setVolume fails', async () => {
+  it('reverts and throws HapStatusError when setVolumeWhenReady fails', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = {
-      setVolume: jest.fn().mockRejectedValue(new Error('offline')),
+      setVolumeWhenReady: jest.fn().mockRejectedValue(new Error('offline')),
       getVolume: jest.fn(),
     } as unknown as ConcertClient
 
@@ -227,11 +231,35 @@ describe('VolumePresetAccessory', () => {
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', false)
   })
 
+  it('logs a friendly not-ready message when onWaiting fires', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    const client = {
+      setVolumeWhenReady: jest.fn().mockImplementation(
+        (_level: number, _zone: number, options?: { onWaiting?: () => void }) => {
+          options?.onWaiting?.()
+          return Promise.reject(new Error('volume set rejected: invalid command in current state'))
+        },
+      ),
+      getVolume: jest.fn(),
+    } as unknown as ConcertClient
+
+    new VolumePresetAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+
+    await expect(setHandler(true)).rejects.toBeInstanceOf(FakeHapStatusError)
+    expect(platform.log.info).toHaveBeenCalledWith(
+      'XR-8S Volume: device is not ready (check power); retrying for up to 60s',
+    )
+    expect(platform.log.error).toHaveBeenCalledWith(
+      'XR-8S Volume: set failed: volume set rejected: invalid command in current state',
+    )
+  })
+
   it('requires volume in context', () => {
     const { platform, accessory } = createPlatform()
     ;(accessory.context as { volume?: number }).volume = undefined
     const client = {
-      setVolume: jest.fn(),
+      setVolumeWhenReady: jest.fn(),
       getVolume: jest.fn(),
     } as unknown as ConcertClient
 
@@ -241,7 +269,7 @@ describe('VolumePresetAccessory', () => {
   it('returns the cached On value from get', () => {
     const { platform, accessory, onChar } = createPlatform()
     const client = {
-      setVolume: jest.fn(),
+      setVolumeWhenReady: jest.fn(),
       getVolume: jest.fn(),
     } as unknown as ConcertClient
 
@@ -254,7 +282,7 @@ describe('VolumePresetAccessory', () => {
     const { platform, accessory } = createPlatform()
     let resolvePoll: ((value: number) => void) | undefined
     const client = {
-      setVolume: jest.fn(),
+      setVolumeWhenReady: jest.fn(),
       getVolume: jest.fn().mockImplementation(() => new Promise<number>((resolve) => {
         resolvePoll = resolve
       })),
@@ -271,7 +299,7 @@ describe('VolumePresetAccessory', () => {
   it('logs recovery after a successful poll following failures', async () => {
     const { platform, accessory } = createPlatform()
     const client = {
-      setVolume: jest.fn(),
+      setVolumeWhenReady: jest.fn(),
       getVolume: jest.fn()
         .mockRejectedValueOnce(new Error('timeout'))
         .mockRejectedValueOnce(new Error('timeout'))
@@ -293,7 +321,7 @@ describe('VolumePresetAccessory', () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     let resolvePoll: ((value: number) => void) | undefined
     const client = {
-      setVolume: jest.fn().mockResolvedValue(undefined),
+      setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn().mockImplementation(() => new Promise<number>((resolve) => {
         resolvePoll = resolve
       })),
@@ -309,5 +337,24 @@ describe('VolumePresetAccessory', () => {
     expect(switchService.updateCharacteristic).not.toHaveBeenCalledWith('On', false)
     const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
     expect(getHandler()).toBe(true)
+  })
+
+  it('skips poll ticks while a volume set is in flight', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    let resolveSet: (() => void) | undefined
+    const client = {
+      setVolumeWhenReady: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+        resolveSet = resolve
+      })),
+      getVolume: jest.fn().mockResolvedValue(40),
+    } as unknown as ConcertClient
+
+    const handler = new VolumePresetAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    const pendingSet = setHandler(true)
+    await handler.refresh()
+    expect(client.getVolume).not.toHaveBeenCalled()
+    resolveSet?.()
+    await pendingSet
   })
 })

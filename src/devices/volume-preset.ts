@@ -11,7 +11,7 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 import { HAPStatus } from 'homebridge'
 
 import type { ConcertClient } from '../api'
-import { DEFAULT_MODEL, readPluginVersion } from '../settings'
+import { DEFAULT_MODEL, VOLUME_READY_TIMEOUT_MS, readPluginVersion } from '../settings'
 import type { AccessoryContext, RefreshableAccessory } from '../types'
 import { ensureAccessorySerialNumber } from '../utils'
 import type ConcertPlatform from '../platform'
@@ -111,7 +111,15 @@ export class VolumePresetAccessory implements RefreshableAccessory {
   private async runSetOn(): Promise<void> {
     const mySet = ++this.setGeneration
     try {
-      await this.client.setVolume(this.targetVolume, this.zone)
+      // Retries politely while the XR finishes waking so Shortcuts need no Wait.
+      await this.client.setVolumeWhenReady(this.targetVolume, this.zone, {
+        onWaiting: () => {
+          this.platform.log.info(
+            `${this.accessory.displayName}: device is not ready (check power); `
+            + `retrying for up to ${Math.round(VOLUME_READY_TIMEOUT_MS / 1000)}s`,
+          )
+        },
+      })
       if (mySet !== this.setGeneration) {
         return
       }
@@ -128,9 +136,13 @@ export class VolumePresetAccessory implements RefreshableAccessory {
 
   /**
    * Poll volume and push On iff it matches the target. Concurrent callers share
-   * a single in-flight request (single-flight).
+   * a single in-flight request (single-flight). Skipped while a HomeKit set is
+   * waiting for the receiver (wake can take tens of seconds).
    */
   async refresh(): Promise<void> {
+    if (this.setInFlight) {
+      return
+    }
     if (this.refreshInFlight) {
       return this.refreshInFlight
     }
@@ -145,7 +157,9 @@ export class VolumePresetAccessory implements RefreshableAccessory {
     const setGenerationAtStart = this.setGeneration
     try {
       const level = await this.client.getVolume(this.zone)
-      if (setGenerationAtStart !== this.setGeneration) {
+      // Discard if a set started while we were awaiting (same generation as an
+      // in-flight wake wait would otherwise clobber On mid-retry).
+      if (setGenerationAtStart !== this.setGeneration || this.setInFlight) {
         return
       }
       const atTarget = level === this.targetVolume
@@ -162,7 +176,7 @@ export class VolumePresetAccessory implements RefreshableAccessory {
         this.platform.log.info(`${this.accessory.displayName}: poll recovered`)
       }
     } catch (error) {
-      if (setGenerationAtStart !== this.setGeneration) {
+      if (setGenerationAtStart !== this.setGeneration || this.setInFlight) {
         return
       }
       // Standby / unreachable: treat as not-at-preset without tearing down.

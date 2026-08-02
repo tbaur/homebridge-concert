@@ -17,8 +17,12 @@ export class ConnectionError extends Error {
 
 /** The receiver replied with a non-success answer code or an unreadable frame. */
 export class ProtocolError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options)
+  /** Present when the error came from a parsed non-OK answer code. */
+  readonly answerCode?: number
+
+  constructor(message: string, options?: { cause?: unknown; answerCode?: number }) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined)
     this.name = 'ProtocolError'
+    this.answerCode = options?.answerCode
   }
 }

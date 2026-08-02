@@ -11,6 +11,7 @@ import type net from 'node:net'
 import { ConcertClient } from '../../src/api/client'
 import { ConnectionError, ProtocolError } from '../../src/errors'
 import {
+  ANSWER_INVALID_STATE,
   ANSWER_OK,
   COMMAND_RC5,
   COMMAND_VOLUME,
@@ -23,6 +24,9 @@ import {
 import {
   MAX_RESPONSE_BUFFER_BYTES,
   POWER_QUERY_RETRY_MS,
+  VOLUME_READY_NOT_READY_LOG_AFTER_MS,
+  VOLUME_READY_RETRY_INTERVAL_MS,
+  VOLUME_READY_TIMEOUT_MS,
 } from '../../src/settings'
 
 class FakeSocket extends EventEmitter {
@@ -426,5 +430,89 @@ describe('ConcertClient', () => {
     await jest.advanceTimersByTimeAsync(1_500)
     await expect(pending).resolves.toBeUndefined()
     expect(createConnection).toHaveBeenCalledTimes(2)
+  })
+
+  it('setVolumeWhenReady retries after invalid-state then succeeds', async () => {
+    jest.useFakeTimers()
+    const logger = { info: jest.fn(), debug: jest.fn() }
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      logger,
+      createConnection: jest.fn() as unknown as typeof net.createConnection,
+    })
+    const setVolume = jest.spyOn(client, 'setVolume')
+      .mockRejectedValueOnce(new ProtocolError('volume set rejected: invalid command in current state', {
+        answerCode: ANSWER_INVALID_STATE,
+      }))
+      .mockResolvedValueOnce(undefined)
+
+    const onWaiting = jest.fn()
+    const pending = client.setVolumeWhenReady(57, 1, { onWaiting })
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(VOLUME_READY_RETRY_INTERVAL_MS)
+    await expect(pending).resolves.toBeUndefined()
+    expect(setVolume).toHaveBeenCalledTimes(2)
+    // Normal ~20s wake finishes before the not-ready info threshold.
+    expect(onWaiting).not.toHaveBeenCalled()
+    expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('receiver ready'))
+  })
+
+  it('setVolumeWhenReady notifies onWaiting only after the not-ready log delay', async () => {
+    jest.useFakeTimers()
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: jest.fn() as unknown as typeof net.createConnection,
+    })
+    const notReady = new ProtocolError(
+      'volume set rejected: invalid command in current state',
+      { answerCode: ANSWER_INVALID_STATE },
+    )
+    const setVolume = jest.spyOn(client, 'setVolume').mockRejectedValue(notReady)
+
+    const onWaiting = jest.fn()
+    const pending = client.setVolumeWhenReady(57, 1, { onWaiting })
+    await Promise.resolve()
+    await jest.advanceTimersByTimeAsync(VOLUME_READY_NOT_READY_LOG_AFTER_MS - 1)
+    expect(onWaiting).not.toHaveBeenCalled()
+
+    // Cross the log threshold while still failing, then succeed on the next try.
+    await jest.advanceTimersByTimeAsync(VOLUME_READY_RETRY_INTERVAL_MS)
+    expect(onWaiting).toHaveBeenCalledTimes(1)
+
+    setVolume.mockResolvedValueOnce(undefined)
+    await jest.advanceTimersByTimeAsync(VOLUME_READY_RETRY_INTERVAL_MS)
+    await expect(pending).resolves.toBeUndefined()
+  })
+
+  it('setVolumeWhenReady does not retry permanent protocol errors', async () => {
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: jest.fn() as unknown as typeof net.createConnection,
+    })
+    const setVolume = jest.spyOn(client, 'setVolume').mockRejectedValue(
+      new ProtocolError('volume set rejected: incorrect parameter', { answerCode: 0x84 }),
+    )
+
+    await expect(client.setVolumeWhenReady(57, 1)).rejects.toBeInstanceOf(ProtocolError)
+    expect(setVolume).toHaveBeenCalledTimes(1)
+  })
+
+  it('setVolumeWhenReady gives up after the ready timeout', async () => {
+    jest.useFakeTimers()
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: jest.fn() as unknown as typeof net.createConnection,
+    })
+    const setVolume = jest.spyOn(client, 'setVolume').mockRejectedValue(
+      new ProtocolError('volume set rejected: invalid command in current state', {
+        answerCode: ANSWER_INVALID_STATE,
+      }),
+    )
+
+    const pending = client.setVolumeWhenReady(57, 1)
+    const expectation = expect(pending).rejects.toBeInstanceOf(ProtocolError)
+    await jest.advanceTimersByTimeAsync(VOLUME_READY_TIMEOUT_MS + VOLUME_READY_RETRY_INTERVAL_MS)
+    await expectation
+    expect(setVolume.mock.calls.length).toBeGreaterThan(1)
   })
 })

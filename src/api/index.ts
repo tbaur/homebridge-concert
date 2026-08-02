@@ -6,8 +6,9 @@
  */
 
 export { ConcertClient } from './client'
-export type { ConcertClientOptions } from './client'
+export type { ConcertClientOptions, SetVolumeWhenReadyOptions } from './client'
 export {
+  ANSWER_INVALID_STATE,
   ANSWER_OK,
   COMMAND_POWER,
   COMMAND_RC5,

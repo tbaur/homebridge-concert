@@ -6,10 +6,11 @@
  * See LICENSE file for full license text
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.tryParseResponse = exports.rc5SystemForZone = exports.parseVolume = exports.isPowerOn = exports.formatFrame = exports.describeAnswerCode = exports.buildVolumeSet = exports.buildVolumeQuery = exports.buildRequest = exports.buildRc5 = exports.buildPowerStandby = exports.buildPowerQuery = exports.buildPowerOn = exports.VOLUME_QUERY = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.RC5_POWER_ON = exports.RC5_POWER_OFF = exports.POWER_STANDBY = exports.POWER_QUERY = exports.POWER_ON = exports.MIN_VOLUME = exports.MAX_VOLUME = exports.FRAME_START = exports.FRAME_END = exports.COMMAND_VOLUME = exports.COMMAND_RC5 = exports.COMMAND_POWER = exports.ANSWER_OK = exports.ConcertClient = void 0;
+exports.tryParseResponse = exports.rc5SystemForZone = exports.parseVolume = exports.isPowerOn = exports.formatFrame = exports.describeAnswerCode = exports.buildVolumeSet = exports.buildVolumeQuery = exports.buildRequest = exports.buildRc5 = exports.buildPowerStandby = exports.buildPowerQuery = exports.buildPowerOn = exports.VOLUME_QUERY = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.RC5_POWER_ON = exports.RC5_POWER_OFF = exports.POWER_STANDBY = exports.POWER_QUERY = exports.POWER_ON = exports.MIN_VOLUME = exports.MAX_VOLUME = exports.FRAME_START = exports.FRAME_END = exports.COMMAND_VOLUME = exports.COMMAND_RC5 = exports.COMMAND_POWER = exports.ANSWER_OK = exports.ANSWER_INVALID_STATE = exports.ConcertClient = void 0;
 var client_1 = require("./client");
 Object.defineProperty(exports, "ConcertClient", { enumerable: true, get: function () { return client_1.ConcertClient; } });
 var protocol_1 = require("./protocol");
+Object.defineProperty(exports, "ANSWER_INVALID_STATE", { enumerable: true, get: function () { return protocol_1.ANSWER_INVALID_STATE; } });
 Object.defineProperty(exports, "ANSWER_OK", { enumerable: true, get: function () { return protocol_1.ANSWER_OK; } });
 Object.defineProperty(exports, "COMMAND_POWER", { enumerable: true, get: function () { return protocol_1.COMMAND_POWER; } });
 Object.defineProperty(exports, "COMMAND_RC5", { enumerable: true, get: function () { return protocol_1.COMMAND_RC5; } });

@@ -8,7 +8,7 @@
  * @fileoverview Plugin-wide constants for AudioControl Concert IP control.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.POWER_QUERY_RETRY_MS = exports.POWER_QUERY_RETRIES = exports.POWER_VERIFY_ATTEMPTS = exports.POWER_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.DEFAULT_MODEL = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
+exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.VOLUME_READY_NOT_READY_LOG_AFTER_MS = exports.VOLUME_READY_TIMEOUT_MS = exports.VOLUME_READY_RETRY_INTERVAL_MS = exports.POWER_QUERY_RETRY_MS = exports.POWER_QUERY_RETRIES = exports.POWER_VERIFY_ATTEMPTS = exports.POWER_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.DEFAULT_MODEL = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
 exports.readPluginVersion = readPluginVersion;
 /** Name used to register the plugin with Homebridge (must match package.json name). */
 exports.PLUGIN_NAME = 'homebridge-concert';
@@ -62,6 +62,22 @@ exports.POWER_VERIFY_ATTEMPTS = 2;
 exports.POWER_QUERY_RETRIES = 1;
 /** Delay before retrying a timed-out / closed state query. */
 exports.POWER_QUERY_RETRY_MS = 500;
+/**
+ * Delay between volume-set attempts while waiting for the receiver to accept
+ * volume after a cold wake (standby → on).
+ */
+exports.VOLUME_READY_RETRY_INTERVAL_MS = 2_000;
+/**
+ * Maximum time a HomeKit volume-preset On write will wait for the receiver to
+ * accept volume (Shortcuts can block on this instead of a fixed Wait).
+ */
+exports.VOLUME_READY_TIMEOUT_MS = 60_000;
+/**
+ * How long to wait before logging "device is not ready" during a volume-set
+ * retry. Normal XR wake is ~20s; stay quiet until this threshold so healthy
+ * boots do not spam the log.
+ */
+exports.VOLUME_READY_NOT_READY_LOG_AFTER_MS = 30_000;
 /** Maximum time allowed for establishing a TCP connection. */
 exports.DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 /**
