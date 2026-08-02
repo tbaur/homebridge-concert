@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.5](https://github.com/tbaur/homebridge-concert/compare/v0.1.4...v0.1.5) (2026-08-02)
+
+
+### Features
+
+* add multi-accessory volume presets ([#11](https://github.com/tbaur/homebridge-concert/issues/11)) ([406d187](https://github.com/tbaur/homebridge-concert/commit/406d1874ea8919f2d15c0c5f5e2b8b5e1dab37d8))
+
 ## [0.1.4](https://github.com/tbaur/homebridge-concert/compare/v0.1.3...v0.1.4) (2026-08-01)
 
 
