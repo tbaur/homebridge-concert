@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.8](https://github.com/tbaur/homebridge-concert/compare/v0.1.7...v0.1.8) (2026-08-02)
+
+
+### Features
+
+* retry volume preset set while receiver wakes ([#17](https://github.com/tbaur/homebridge-concert/issues/17)) ([47a894e](https://github.com/tbaur/homebridge-concert/commit/47a894ebe8cfeff8f7fee54175200f01d730ff48))
+
 ## [0.1.7](https://github.com/tbaur/homebridge-concert/compare/v0.1.6...v0.1.7) (2026-08-02)
 
 
