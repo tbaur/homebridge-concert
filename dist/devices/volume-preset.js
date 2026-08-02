@@ -77,12 +77,12 @@ class VolumePresetAccessory {
             await this.client.setVolume(this.targetVolume, this.zone);
             if (mySet === this.setGeneration) {
                 this.isAtTarget = true;
-                this.platform.log.info(`${this.accessory.displayName}: volume ${this.targetVolume}`);
+                this.platform.log.info(`${this.accessory.displayName}: SET ${this.targetVolume}`);
             }
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            this.platform.log.error(`${this.accessory.displayName} volume set failed: ${message}`);
+            this.platform.log.error(`${this.accessory.displayName}: set failed: ${message}`);
             this.switchService.updateCharacteristic(this.platform.Characteristic.On, this.isAtTarget);
             throw new this.platform.api.hap.HapStatusError(-70402 /* HAPStatus.SERVICE_COMMUNICATION_FAILURE */);
         }
@@ -110,13 +110,13 @@ class VolumePresetAccessory {
             const atTarget = level === this.targetVolume;
             if (atTarget !== this.isAtTarget) {
                 this.platform.log.info(`${this.accessory.displayName}: ${atTarget ? 'ON' : 'OFF'} `
-                    + `(volume ${level}, external)`);
+                    + `(level ${level}, external)`);
             }
             this.isAtTarget = atTarget;
             this.switchService.updateCharacteristic(this.platform.Characteristic.On, atTarget);
             if (this.pollFailureActive) {
                 this.pollFailureActive = false;
-                this.platform.log.info(`${this.accessory.displayName} volume poll recovered`);
+                this.platform.log.info(`${this.accessory.displayName}: poll recovered`);
             }
         }
         catch (error) {
@@ -131,10 +131,10 @@ class VolumePresetAccessory {
             const message = error instanceof Error ? error.message : String(error);
             if (!this.pollFailureActive) {
                 this.pollFailureActive = true;
-                this.platform.log.warn(`${this.accessory.displayName} volume poll failed: ${message}`);
+                this.platform.log.warn(`${this.accessory.displayName}: poll failed: ${message}`);
             }
             else {
-                this.platform.log.debug?.(`${this.accessory.displayName} volume poll failed: ${message}`);
+                this.platform.log.debug?.(`${this.accessory.displayName}: poll failed: ${message}`);
             }
         }
     }

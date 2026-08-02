@@ -83,7 +83,7 @@ function validConfig(overrides: Partial<ConcertPlatformConfig> = {}): ConcertPla
     name: 'Theater',
     host: '192.168.1.50',
     accessories: [
-      { type: 'power', name: 'XR-8S', zone: 1 },
+      { type: 'power', name: 'XR-8S Power', zone: 1 },
     ],
     ...overrides,
   }
@@ -107,7 +107,7 @@ describe('ConcertPlatform', () => {
     const config = {
       platform: 'Concert',
       name: 'Concert',
-      accessories: [{ type: 'power', name: 'XR-8S' }],
+      accessories: [{ type: 'power', name: 'XR-8S Power' }],
     } as ConcertPlatformConfig
 
     const platform = new ConcertPlatform(log, config, api)
@@ -146,8 +146,8 @@ describe('ConcertPlatform', () => {
     const log = createLog()
     const config = validConfig({
       accessories: [
-        { type: 'power', name: 'XR-8S', zone: 1 },
-        { type: 'volumePreset', name: 'Concert 57', zone: 1, volume: 57 },
+        { type: 'power', name: 'XR-8S Power', zone: 1 },
+        { type: 'volumePreset', name: 'XR-8S Volume', zone: 1, volume: 57 },
       ],
     })
 
@@ -159,14 +159,14 @@ describe('ConcertPlatform', () => {
       'homebridge-concert',
       'Concert',
       expect.arrayContaining([
-        expect.objectContaining({ displayName: 'XR-8S' }),
+        expect.objectContaining({ displayName: 'XR-8S Power' }),
       ]),
     )
     expect(api.registerPlatformAccessories).toHaveBeenCalledWith(
       'homebridge-concert',
       'Concert',
       expect.arrayContaining([
-        expect.objectContaining({ displayName: 'Concert 57' }),
+        expect.objectContaining({ displayName: 'XR-8S Volume' }),
       ]),
     )
     expect(ConcertClient.prototype.getPowerState).toHaveBeenCalled()

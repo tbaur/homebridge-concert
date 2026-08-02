@@ -9,7 +9,7 @@
     "required": ["name", "host", "accessories"],
     "properties": {
       "name": {
-        "title": "Name",
+        "title": "Platform Name",
         "type": "string",
         "default": "Concert",
         "description": "Plugin instance name shown in the Homebridge log."
@@ -30,7 +30,7 @@
       "model": {
         "title": "Model",
         "type": "string",
-        "default": "Concert XR-8S",
+        "default": "AudioControl Concert XR-8S",
         "description": "Optional model name shown in HomeKit Accessory Information."
       },
       "accessories": {
@@ -39,6 +39,7 @@
         "minItems": 1,
         "description": "HomeKit switches to expose. Add a power switch and optional volume-preset switches (On = at that level).",
         "items": {
+          "title": "Accessory",
           "type": "object",
           "required": ["type", "name"],
           "properties": {
@@ -46,33 +47,27 @@
               "title": "Type",
               "type": "string",
               "default": "power",
-              "oneOf": [
-                { "title": "Power (on / standby)", "enum": ["power"] },
-                { "title": "Volume preset", "enum": ["volumePreset"] }
-              ],
-              "description": "Power toggles standby. Volume preset is On when the zone volume equals the configured level."
+              "enum": ["power", "volumePreset"],
+              "description": "power = on/standby switch. volumePreset = On when the zone is at the configured volume level; turning On sets that level."
             },
             "name": {
-              "title": "Name",
+              "title": "HomeKit Name",
               "type": "string",
-              "placeholder": "XR-8S",
-              "description": "HomeKit display name for this switch."
+              "placeholder": "XR-8S Power",
+              "description": "Display name for this switch in the Home app (e.g. XR-8S Power, XR-8S Volume)."
             },
             "zone": {
               "title": "Zone",
               "type": "integer",
               "default": 1,
-              "oneOf": [
-                { "title": "Zone 1 (Main)", "enum": [1] },
-                { "title": "Zone 2", "enum": [2] }
-              ],
-              "description": "Which zone this accessory controls."
+              "enum": [1, 2],
+              "description": "Which zone this accessory controls (1 = main, 2 = zone 2)."
             },
             "volume": {
               "title": "Volume Level",
               "type": "integer",
               "placeholder": "57",
-              "description": "Required for volume preset (0–99). Ignored for power accessories."
+              "description": "Required when Type is volumePreset (0–99). Ignored for power."
             }
           }
         }
@@ -91,7 +86,7 @@
       }
     }
   },
-  "form": [
+  "layout": [
     "name",
     "host",
     {
@@ -103,15 +98,30 @@
       "key": "accessories",
       "type": "array",
       "orderable": true,
+      "buttonText": "Add Accessory",
       "items": [
-        "type",
-        "name",
-        "zone",
         {
-          "key": "volume",
+          "key": "accessories[].type",
+          "type": "select",
+          "titleMap": [
+            { "name": "Power (on / standby)", "value": "power" },
+            { "name": "Volume preset", "value": "volumePreset" }
+          ]
+        },
+        "accessories[].name",
+        {
+          "key": "accessories[].zone",
+          "type": "select",
+          "titleMap": [
+            { "name": "Zone 1 (Main)", "value": 1 },
+            { "name": "Zone 2", "value": 2 }
+          ]
+        },
+        {
+          "key": "accessories[].volume",
           "type": "integer",
           "condition": {
-            "functionBody": "try { return model.accessories[arrayIndices[0]].type === 'volumePreset'; } catch (e) { return false; }"
+            "functionBody": "return model.accessories?.[arrayIndices?.[0]]?.type === 'volumePreset';"
           }
         }
       ]

@@ -83,7 +83,7 @@ export class PowerAccessory implements RefreshableAccessory {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.platform.log.error(`${this.accessory.displayName} power set failed: ${message}`)
+      this.platform.log.error(`${this.accessory.displayName}: set failed: ${message}`)
       // Revert the characteristic so HomeKit does not show a lying state.
       this.switchService.updateCharacteristic(this.platform.Characteristic.On, this.isOn)
       // HapStatusError (not a raw Error) so Homebridge does not log an
@@ -127,7 +127,7 @@ export class PowerAccessory implements RefreshableAccessory {
       this.switchService.updateCharacteristic(this.platform.Characteristic.On, on)
       if (this.pollFailureActive) {
         this.pollFailureActive = false
-        this.platform.log.info(`${this.accessory.displayName} power poll recovered`)
+        this.platform.log.info(`${this.accessory.displayName}: poll recovered`)
       }
     } catch (error) {
       if (setGenerationAtStart !== this.setGeneration) {
@@ -137,11 +137,11 @@ export class PowerAccessory implements RefreshableAccessory {
       if (!this.pollFailureActive) {
         this.pollFailureActive = true
         this.platform.log.warn(
-          `${this.accessory.displayName} power poll failed: ${message}`,
+          `${this.accessory.displayName}: poll failed: ${message}`,
         )
       } else {
         this.platform.log.debug?.(
-          `${this.accessory.displayName} power poll failed: ${message}`,
+          `${this.accessory.displayName}: poll failed: ${message}`,
         )
       }
     }
