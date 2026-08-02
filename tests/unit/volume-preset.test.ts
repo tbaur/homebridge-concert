@@ -85,7 +85,7 @@ function createPlatform(volume = 57) {
 
 describe('VolumePresetAccessory', () => {
   it('sets volume when turned On', async () => {
-    const { platform, accessory, onChar } = createPlatform()
+    const { platform, accessory, onChar, switchService } = createPlatform()
     const client = {
       setVolume: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn(),
@@ -97,6 +97,65 @@ describe('VolumePresetAccessory', () => {
 
     expect(client.setVolume).toHaveBeenCalledWith(57, 1)
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: SET 57')
+    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
+  })
+
+  it('skips setVolume when already at the preset', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    const client = {
+      setVolume: jest.fn().mockResolvedValue(undefined),
+      getVolume: jest.fn().mockResolvedValue(57),
+    } as unknown as ConcertClient
+
+    const handler = new VolumePresetAccessory(platform, accessory, client)
+    await handler.refresh()
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    await setHandler(true)
+    await setHandler(true)
+
+    expect(client.setVolume).not.toHaveBeenCalled()
+    expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S Volume: SET 57')
+  })
+
+  it('single-flights concurrent On writes into one setVolume', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    let resolveSet: (() => void) | undefined
+    const client = {
+      setVolume: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+        resolveSet = resolve
+      })),
+      getVolume: jest.fn(),
+    } as unknown as ConcertClient
+
+    new VolumePresetAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    const first = setHandler(true)
+    const second = setHandler(true)
+    const third = setHandler(true)
+
+    expect(client.setVolume).toHaveBeenCalledTimes(1)
+    resolveSet?.()
+    await Promise.all([first, second, third])
+    expect(client.setVolume).toHaveBeenCalledTimes(1)
+    expect(platform.log.info).toHaveBeenCalledTimes(1)
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: SET 57')
+  })
+
+  it('does not re-set after a successful On when HomeKit repeats the write', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    const client = {
+      setVolume: jest.fn().mockResolvedValue(undefined),
+      getVolume: jest.fn(),
+    } as unknown as ConcertClient
+
+    new VolumePresetAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    await setHandler(true)
+    await setHandler(true)
+    await setHandler(true)
+
+    expect(client.setVolume).toHaveBeenCalledTimes(1)
+    expect(platform.log.info).toHaveBeenCalledTimes(1)
   })
 
   it('treats Off as a no-op and snaps the characteristic back', async () => {

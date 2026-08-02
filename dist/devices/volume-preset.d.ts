@@ -30,6 +30,8 @@ export declare class VolumePresetAccessory implements RefreshableAccessory {
     private setGeneration;
     /** In-flight refresh promise so overlapping poll ticks share one request. */
     private refreshInFlight?;
+    /** In-flight On→setVolume so HomeKit write storms share one command. */
+    private setInFlight?;
     /** True after the first consecutive poll failure has been logged at warn. */
     private pollFailureActive;
     constructor(platform: ConcertPlatform, accessory: PlatformAccessory, client: ConcertClient);
@@ -38,8 +40,12 @@ export declare class VolumePresetAccessory implements RefreshableAccessory {
     /**
      * Set On → set the configured volume. Set Off → no volume change; snap the
      * characteristic back to whether the zone is currently at the target.
+     *
+     * HomeKit often repeats On writes (Shortcuts, Control Center, retries). Skip
+     * when already at the preset, and coalesce concurrent sets into one command.
      */
     private handleSetOn;
+    private runSetOn;
     /**
      * Poll volume and push On iff it matches the target. Concurrent callers share
      * a single in-flight request (single-flight).
