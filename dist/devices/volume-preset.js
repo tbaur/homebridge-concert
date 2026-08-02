@@ -93,7 +93,13 @@ class VolumePresetAccessory {
     async runSetOn() {
         const mySet = ++this.setGeneration;
         try {
-            await this.client.setVolume(this.targetVolume, this.zone);
+            // Retries politely while the XR finishes waking so Shortcuts need no Wait.
+            await this.client.setVolumeWhenReady(this.targetVolume, this.zone, {
+                onWaiting: () => {
+                    this.platform.log.info(`${this.accessory.displayName}: device is not ready (check power); `
+                        + `retrying for up to ${Math.round(settings_1.VOLUME_READY_TIMEOUT_MS / 1000)}s`);
+                },
+            });
             if (mySet !== this.setGeneration) {
                 return;
             }
@@ -110,9 +116,13 @@ class VolumePresetAccessory {
     }
     /**
      * Poll volume and push On iff it matches the target. Concurrent callers share
-     * a single in-flight request (single-flight).
+     * a single in-flight request (single-flight). Skipped while a HomeKit set is
+     * waiting for the receiver (wake can take tens of seconds).
      */
     async refresh() {
+        if (this.setInFlight) {
+            return;
+        }
         if (this.refreshInFlight) {
             return this.refreshInFlight;
         }
@@ -125,7 +135,9 @@ class VolumePresetAccessory {
         const setGenerationAtStart = this.setGeneration;
         try {
             const level = await this.client.getVolume(this.zone);
-            if (setGenerationAtStart !== this.setGeneration) {
+            // Discard if a set started while we were awaiting (same generation as an
+            // in-flight wake wait would otherwise clobber On mid-retry).
+            if (setGenerationAtStart !== this.setGeneration || this.setInFlight) {
                 return;
             }
             const atTarget = level === this.targetVolume;
@@ -141,7 +153,7 @@ class VolumePresetAccessory {
             }
         }
         catch (error) {
-            if (setGenerationAtStart !== this.setGeneration) {
+            if (setGenerationAtStart !== this.setGeneration || this.setInFlight) {
                 return;
             }
             // Standby / unreachable: treat as not-at-preset without tearing down.

@@ -51,6 +51,11 @@ export declare const RC5_POWER_ON = 123;
 export declare const RC5_POWER_OFF = 124;
 /** Answer code: status update / no problems. */
 export declare const ANSWER_OK = 0;
+/**
+ * Answer code: command not valid in the receiver's current state.
+ * Common while waking from standby before the control plane accepts volume.
+ */
+export declare const ANSWER_INVALID_STATE = 133;
 /** Parsed response frame from the receiver. */
 export interface ProtocolResponse {
     zone: number;

@@ -6,7 +6,7 @@
 
 - ✅ Multi-accessory platform: configure one or more HomeKit Switches per receiver
 - ✅ Power on / standby (`type: power`)
-- ✅ Volume preset Switch (`type: volumePreset`) — On when volume equals a configured 0–99 level; set On sets that level; set Off is a no-op
+- ✅ Volume preset Switch (`type: volumePreset`) — On when volume equals a configured 0–99 level; set On sets that level (retries politely for up to 60s while waking; not-ready log after 30s); set Off is a no-op
 - ✅ Per-accessory zone targeting (Zone 1 or Zone 2)
 - ✅ LAN IP control over TCP port 50000 (AudioControl X/XR automation protocol)
 - ✅ Configurable state polling (90s default, 5s–86400s clamp)

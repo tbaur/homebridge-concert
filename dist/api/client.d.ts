@@ -22,6 +22,14 @@ export interface ConcertClientOptions {
     /** Injected for tests; defaults to `net.createConnection`. */
     createConnection?: typeof net.createConnection;
 }
+/** Options for {@link ConcertClient.setVolumeWhenReady}. */
+export interface SetVolumeWhenReadyOptions {
+    /**
+     * Called once after {@link VOLUME_READY_NOT_READY_LOG_AFTER_MS} of retryable
+     * failures (not on the first attempt — normal XR wake stays quiet).
+     */
+    onWaiting?: () => void;
+}
 /**
  * Sends framed automation commands to an AudioControl Concert receiver over TCP.
  */
@@ -76,6 +84,14 @@ export declare class ConcertClient {
      * volume query before failing — matching power-set resilience.
      */
     setVolume(level: number, zone?: number): Promise<void>;
+    /**
+     * Set volume, retrying politely while the receiver finishes waking.
+     *
+     * Cold boot often reports power On before volume is accepted (`0x85` / timeouts).
+     * Retries every {@link VOLUME_READY_RETRY_INTERVAL_MS} until success or
+     * {@link VOLUME_READY_TIMEOUT_MS}, so Shortcuts can Set Volume without a fixed Wait.
+     */
+    setVolumeWhenReady(level: number, zone?: number, options?: SetVolumeWhenReadyOptions): Promise<void>;
     /** True when a power query reports the desired on/off state. */
     private verifyPowerState;
     /** True when a volume query reports the desired level. */

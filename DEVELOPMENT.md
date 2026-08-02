@@ -44,6 +44,7 @@ This plugin talks to a **LAN TCP** control port, so its resilience focuses on ma
 - **Polling cadence** — default 90s, configurable, clamped to 5s–86400s (prevents Node's `setInterval` overflow-to-1ms behavior). Shared timer refreshes every registered handler.
 - **Set/poll isolation** — HomeKit sets own a `setGeneration`; a poll that started before a set is discarded so plugin-driven changes log cleanly. Overlapping poll ticks share one in-flight request per accessory (single-flight).
 - **Query retry** — a timed-out / closed power query is retried once after a short delay before the poll is marked failed.
+- **Wake-aware volume set** — `setVolumeWhenReady` retries every 2s for up to 60s on connection errors and answer `0x85` (invalid in current state), so Shortcuts can set a volume preset after power-on without a fixed Wait. The “device is not ready” info log is deferred 30s (normal XR wake is ~20s). Polls are skipped while that set is in flight.
 - **Quiet poll failures** — the first consecutive failure logs at warn; repeats demote to debug until a successful poll recovers. Volume polls that fail (e.g. standby) report the preset Switch as Off.
 
 ## Testing

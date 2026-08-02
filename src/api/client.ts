@@ -23,9 +23,13 @@ import {
   POWER_QUERY_RETRY_MS,
   POWER_SETTLE_MS,
   POWER_VERIFY_ATTEMPTS,
+  VOLUME_READY_NOT_READY_LOG_AFTER_MS,
+  VOLUME_READY_RETRY_INTERVAL_MS,
+  VOLUME_READY_TIMEOUT_MS,
 } from '../settings'
 import type { PluginLogger } from '../types'
 import {
+  ANSWER_INVALID_STATE,
   ANSWER_OK,
   COMMAND_POWER,
   COMMAND_RC5,
@@ -56,6 +60,15 @@ export interface ConcertClientOptions {
   logger?: PluginLogger
   /** Injected for tests; defaults to `net.createConnection`. */
   createConnection?: typeof net.createConnection
+}
+
+/** Options for {@link ConcertClient.setVolumeWhenReady}. */
+export interface SetVolumeWhenReadyOptions {
+  /**
+   * Called once after {@link VOLUME_READY_NOT_READY_LOG_AFTER_MS} of retryable
+   * failures (not on the first attempt — normal XR wake stays quiet).
+   */
+  onWaiting?: () => void
 }
 
 /**
@@ -227,6 +240,58 @@ export class ConcertClient {
     }
   }
 
+  /**
+   * Set volume, retrying politely while the receiver finishes waking.
+   *
+   * Cold boot often reports power On before volume is accepted (`0x85` / timeouts).
+   * Retries every {@link VOLUME_READY_RETRY_INTERVAL_MS} until success or
+   * {@link VOLUME_READY_TIMEOUT_MS}, so Shortcuts can Set Volume without a fixed Wait.
+   */
+  async setVolumeWhenReady(
+    level: number,
+    zone?: number,
+    options?: SetVolumeWhenReadyOptions,
+  ): Promise<void> {
+    const resolvedZone = this.resolveZone(zone)
+    const startedAt = Date.now()
+    const deadline = startedAt + VOLUME_READY_TIMEOUT_MS
+    let attempt = 0
+    let notifiedWaiting = false
+
+    for (;;) {
+      attempt += 1
+      try {
+        await this.setVolume(level, resolvedZone)
+        if (attempt > 1) {
+          this.log.debug?.(
+            `Volume ${level} set after ${attempt} attempts (receiver ready)`,
+          )
+        }
+        return
+      } catch (error) {
+        const now = Date.now()
+        const remaining = deadline - now
+        if (!isRetryableVolumeError(error) || remaining <= 0) {
+          throw error
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        if (!notifiedWaiting && now - startedAt >= VOLUME_READY_NOT_READY_LOG_AFTER_MS) {
+          notifiedWaiting = true
+          options?.onWaiting?.()
+          this.log.debug?.(
+            `Volume not ready yet (${message}); retrying for up to `
+            + `${Math.round(VOLUME_READY_TIMEOUT_MS / 1000)}s`,
+          )
+        } else {
+          this.log.debug?.(
+            `Volume set attempt ${attempt} failed; retrying`,
+          )
+        }
+        await sleep(Math.min(VOLUME_READY_RETRY_INTERVAL_MS, remaining))
+      }
+    }
+  }
+
   /** True when a power query reports the desired on/off state. */
   private async verifyPowerState(expectedOn: boolean, zone: number): Promise<boolean> {
     for (let attempt = 0; attempt < POWER_VERIFY_ATTEMPTS; attempt++) {
@@ -271,6 +336,7 @@ export class ConcertClient {
     if (response.answerCode !== ANSWER_OK) {
       throw new ProtocolError(
         `${operation} rejected: ${describeAnswerCode(response.answerCode)}`,
+        { answerCode: response.answerCode },
       )
     }
   }
@@ -401,6 +467,14 @@ export class ConcertClient {
       })
     })
   }
+}
+
+/** True when a volume set failure is likely due to wake / not-ready state. */
+function isRetryableVolumeError(error: unknown): boolean {
+  if (error instanceof ConnectionError) {
+    return true
+  }
+  return error instanceof ProtocolError && error.answerCode === ANSWER_INVALID_STATE
 }
 
 function sleep(ms: number): Promise<void> {

@@ -14,8 +14,11 @@ export declare class ConnectionError extends Error {
 }
 /** The receiver replied with a non-success answer code or an unreadable frame. */
 export declare class ProtocolError extends Error {
+    /** Present when the error came from a parsed non-OK answer code. */
+    readonly answerCode?: number;
     constructor(message: string, options?: {
         cause?: unknown;
+        answerCode?: number;
     });
 }
 //# sourceMappingURL=index.d.ts.map

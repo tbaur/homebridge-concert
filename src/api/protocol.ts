@@ -69,12 +69,18 @@ export const RC5_POWER_OFF = 0x7C
 /** Answer code: status update / no problems. */
 export const ANSWER_OK = 0x00
 
+/**
+ * Answer code: command not valid in the receiver's current state.
+ * Common while waking from standby before the control plane accepts volume.
+ */
+export const ANSWER_INVALID_STATE = 0x85
+
 /** Human-readable names for known non-OK answer codes. */
 const ANSWER_CODE_NAMES: Readonly<Record<number, string>> = {
   0x82: 'incorrect zone',
   0x83: 'incorrect command',
   0x84: 'incorrect parameter',
-  0x85: 'invalid command in current state',
+  [ANSWER_INVALID_STATE]: 'invalid command in current state',
   0x86: 'incorrect data length',
 }
 

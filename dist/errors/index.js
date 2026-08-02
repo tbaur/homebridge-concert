@@ -19,9 +19,12 @@ class ConnectionError extends Error {
 exports.ConnectionError = ConnectionError;
 /** The receiver replied with a non-success answer code or an unreadable frame. */
 class ProtocolError extends Error {
+    /** Present when the error came from a parsed non-OK answer code. */
+    answerCode;
     constructor(message, options) {
-        super(message, options);
+        super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
         this.name = 'ProtocolError';
+        this.answerCode = options?.answerCode;
     }
 }
 exports.ProtocolError = ProtocolError;

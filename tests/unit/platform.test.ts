@@ -95,6 +95,7 @@ describe('ConcertPlatform', () => {
     jest.spyOn(ConcertClient.prototype, 'setPower').mockResolvedValue(undefined)
     jest.spyOn(ConcertClient.prototype, 'getVolume').mockResolvedValue(40)
     jest.spyOn(ConcertClient.prototype, 'setVolume').mockResolvedValue(undefined)
+    jest.spyOn(ConcertClient.prototype, 'setVolumeWhenReady').mockResolvedValue(undefined)
   })
 
   afterEach(() => {

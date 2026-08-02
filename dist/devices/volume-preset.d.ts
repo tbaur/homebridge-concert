@@ -48,7 +48,8 @@ export declare class VolumePresetAccessory implements RefreshableAccessory {
     private runSetOn;
     /**
      * Poll volume and push On iff it matches the target. Concurrent callers share
-     * a single in-flight request (single-flight).
+     * a single in-flight request (single-flight). Skipped while a HomeKit set is
+     * waiting for the receiver (wake can take tens of seconds).
      */
     refresh(): Promise<void>;
     private runRefresh;

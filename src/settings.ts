@@ -75,6 +75,25 @@ export const POWER_QUERY_RETRIES = 1
 /** Delay before retrying a timed-out / closed state query. */
 export const POWER_QUERY_RETRY_MS = 500
 
+/**
+ * Delay between volume-set attempts while waiting for the receiver to accept
+ * volume after a cold wake (standby → on).
+ */
+export const VOLUME_READY_RETRY_INTERVAL_MS = 2_000
+
+/**
+ * Maximum time a HomeKit volume-preset On write will wait for the receiver to
+ * accept volume (Shortcuts can block on this instead of a fixed Wait).
+ */
+export const VOLUME_READY_TIMEOUT_MS = 60_000
+
+/**
+ * How long to wait before logging "device is not ready" during a volume-set
+ * retry. Normal XR wake is ~20s; stay quiet until this threshold so healthy
+ * boots do not spam the log.
+ */
+export const VOLUME_READY_NOT_READY_LOG_AFTER_MS = 30_000
+
 /** Maximum time allowed for establishing a TCP connection. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 5_000
 

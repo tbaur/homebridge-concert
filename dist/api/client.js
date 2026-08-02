@@ -169,6 +169,48 @@ class ConcertClient {
             throw error;
         }
     }
+    /**
+     * Set volume, retrying politely while the receiver finishes waking.
+     *
+     * Cold boot often reports power On before volume is accepted (`0x85` / timeouts).
+     * Retries every {@link VOLUME_READY_RETRY_INTERVAL_MS} until success or
+     * {@link VOLUME_READY_TIMEOUT_MS}, so Shortcuts can Set Volume without a fixed Wait.
+     */
+    async setVolumeWhenReady(level, zone, options) {
+        const resolvedZone = this.resolveZone(zone);
+        const startedAt = Date.now();
+        const deadline = startedAt + settings_1.VOLUME_READY_TIMEOUT_MS;
+        let attempt = 0;
+        let notifiedWaiting = false;
+        for (;;) {
+            attempt += 1;
+            try {
+                await this.setVolume(level, resolvedZone);
+                if (attempt > 1) {
+                    this.log.debug?.(`Volume ${level} set after ${attempt} attempts (receiver ready)`);
+                }
+                return;
+            }
+            catch (error) {
+                const now = Date.now();
+                const remaining = deadline - now;
+                if (!isRetryableVolumeError(error) || remaining <= 0) {
+                    throw error;
+                }
+                const message = error instanceof Error ? error.message : String(error);
+                if (!notifiedWaiting && now - startedAt >= settings_1.VOLUME_READY_NOT_READY_LOG_AFTER_MS) {
+                    notifiedWaiting = true;
+                    options?.onWaiting?.();
+                    this.log.debug?.(`Volume not ready yet (${message}); retrying for up to `
+                        + `${Math.round(settings_1.VOLUME_READY_TIMEOUT_MS / 1000)}s`);
+                }
+                else {
+                    this.log.debug?.(`Volume set attempt ${attempt} failed; retrying`);
+                }
+                await sleep(Math.min(settings_1.VOLUME_READY_RETRY_INTERVAL_MS, remaining));
+            }
+        }
+    }
     /** True when a power query reports the desired on/off state. */
     async verifyPowerState(expectedOn, zone) {
         for (let attempt = 0; attempt < settings_1.POWER_VERIFY_ATTEMPTS; attempt++) {
@@ -207,7 +249,7 @@ class ConcertClient {
     }
     assertOk(response, operation) {
         if (response.answerCode !== protocol_1.ANSWER_OK) {
-            throw new errors_1.ProtocolError(`${operation} rejected: ${(0, protocol_1.describeAnswerCode)(response.answerCode)}`);
+            throw new errors_1.ProtocolError(`${operation} rejected: ${(0, protocol_1.describeAnswerCode)(response.answerCode)}`, { answerCode: response.answerCode });
         }
     }
     /**
@@ -315,6 +357,13 @@ class ConcertClient {
     }
 }
 exports.ConcertClient = ConcertClient;
+/** True when a volume set failure is likely due to wake / not-ready state. */
+function isRetryableVolumeError(error) {
+    if (error instanceof errors_1.ConnectionError) {
+        return true;
+    }
+    return error instanceof errors_1.ProtocolError && error.answerCode === protocol_1.ANSWER_INVALID_STATE;
+}
 function sleep(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);

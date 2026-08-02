@@ -22,7 +22,7 @@
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ANSWER_OK = exports.RC5_POWER_OFF = exports.RC5_POWER_ON = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.VOLUME_QUERY = exports.POWER_QUERY = exports.POWER_ON = exports.POWER_STANDBY = exports.COMMAND_RC5 = exports.COMMAND_VOLUME = exports.COMMAND_POWER = exports.FRAME_END = exports.FRAME_START = void 0;
+exports.ANSWER_INVALID_STATE = exports.ANSWER_OK = exports.RC5_POWER_OFF = exports.RC5_POWER_ON = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.VOLUME_QUERY = exports.POWER_QUERY = exports.POWER_ON = exports.POWER_STANDBY = exports.COMMAND_RC5 = exports.COMMAND_VOLUME = exports.COMMAND_POWER = exports.FRAME_END = exports.FRAME_START = void 0;
 exports.buildRequest = buildRequest;
 exports.rc5SystemForZone = rc5SystemForZone;
 exports.buildRc5 = buildRc5;
@@ -68,12 +68,17 @@ exports.RC5_POWER_ON = 0x7B;
 exports.RC5_POWER_OFF = 0x7C;
 /** Answer code: status update / no problems. */
 exports.ANSWER_OK = 0x00;
+/**
+ * Answer code: command not valid in the receiver's current state.
+ * Common while waking from standby before the control plane accepts volume.
+ */
+exports.ANSWER_INVALID_STATE = 0x85;
 /** Human-readable names for known non-OK answer codes. */
 const ANSWER_CODE_NAMES = {
     0x82: 'incorrect zone',
     0x83: 'incorrect command',
     0x84: 'incorrect parameter',
-    0x85: 'invalid command in current state',
+    [exports.ANSWER_INVALID_STATE]: 'invalid command in current state',
     0x86: 'incorrect data length',
 };
 /**
