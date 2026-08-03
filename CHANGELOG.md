@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.9](https://github.com/tbaur/homebridge-concert/compare/v0.1.8...v0.1.9) (2026-08-03)
+
+
+### Bug Fixes
+
+* harden standby polling against XR timeouts ([#19](https://github.com/tbaur/homebridge-concert/issues/19)) ([6a6d9ac](https://github.com/tbaur/homebridge-concert/commit/6a6d9ac488fe316f9ad13204281ea08ac061ec5d))
+
 ## [0.1.8](https://github.com/tbaur/homebridge-concert/compare/v0.1.7...v0.1.8) (2026-08-02)
 
 
