@@ -89,6 +89,13 @@ function validConfig(overrides: Partial<ConcertPlatformConfig> = {}): ConcertPla
   }
 }
 
+/** Drain microtasks / immediates so sequential `refreshAll` can finish. */
+async function settleRefresh(): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+}
+
 describe('ConcertPlatform', () => {
   beforeEach(() => {
     jest.spyOn(ConcertClient.prototype, 'getPowerState').mockResolvedValue(false)
@@ -96,10 +103,12 @@ describe('ConcertPlatform', () => {
     jest.spyOn(ConcertClient.prototype, 'getVolume').mockResolvedValue(40)
     jest.spyOn(ConcertClient.prototype, 'setVolume').mockResolvedValue(undefined)
     jest.spyOn(ConcertClient.prototype, 'setVolumeWhenReady').mockResolvedValue(undefined)
+    jest.spyOn(ConcertClient.prototype, 'getLastPowerState').mockReturnValue(undefined)
   })
 
   afterEach(() => {
     jest.useRealTimers()
+    jest.restoreAllMocks()
   })
 
   it('stays disabled when host is missing and clears cached accessories', () => {
@@ -142,7 +151,7 @@ describe('ConcertPlatform', () => {
     expect(api.registerPlatformAccessories).not.toHaveBeenCalled()
   })
 
-  it('registers power and volume accessories on launch', () => {
+  it('registers power and volume accessories on launch', async () => {
     const api = createMockApi()
     const log = createLog()
     const config = validConfig({
@@ -151,9 +160,12 @@ describe('ConcertPlatform', () => {
         { type: 'volumePreset', name: 'XR-8S Volume', zone: 1, volume: 57 },
       ],
     })
+    jest.spyOn(ConcertClient.prototype, 'getPowerState').mockResolvedValue(true)
+    jest.spyOn(ConcertClient.prototype, 'getLastPowerState').mockReturnValue(true)
 
     new ConcertPlatform(log, config, api)
     api.emit('didFinishLaunching')
+    await settleRefresh()
 
     expect(api.registerPlatformAccessories).toHaveBeenCalledTimes(2)
     expect(api.registerPlatformAccessories).toHaveBeenCalledWith(
@@ -178,6 +190,27 @@ describe('ConcertPlatform', () => {
     )
     expect(ConcertClient.prototype.getPowerState).toHaveBeenCalled()
     expect(ConcertClient.prototype.getVolume).toHaveBeenCalled()
+    api.emit('shutdown')
+  })
+
+  it('skips volume poll on launch when the zone is in standby', async () => {
+    const api = createMockApi()
+    const log = createLog()
+    const config = validConfig({
+      accessories: [
+        { type: 'power', name: 'XR-8S Power', zone: 1 },
+        { type: 'volumePreset', name: 'XR-8S Volume', zone: 1, volume: 57 },
+      ],
+    })
+    jest.spyOn(ConcertClient.prototype, 'getPowerState').mockResolvedValue(false)
+    jest.spyOn(ConcertClient.prototype, 'getLastPowerState').mockReturnValue(false)
+
+    new ConcertPlatform(log, config, api)
+    api.emit('didFinishLaunching')
+    await settleRefresh()
+
+    expect(ConcertClient.prototype.getPowerState).toHaveBeenCalled()
+    expect(ConcertClient.prototype.getVolume).not.toHaveBeenCalled()
     api.emit('shutdown')
   })
 
@@ -312,6 +345,40 @@ describe('ConcertPlatform', () => {
     const callsAfterShutdown = (ConcertClient.prototype.getPowerState as jest.Mock).mock.calls.length
     await jest.advanceTimersByTimeAsync(5_000)
     expect((ConcertClient.prototype.getPowerState as jest.Mock).mock.calls.length).toBe(callsAfterShutdown)
+  })
+
+  it('coalesces overlapping poll ticks onto one in-flight refresh', async () => {
+    jest.useFakeTimers()
+    const api = createMockApi()
+    const log = createLog()
+    const config = validConfig({
+      options: { refreshRate: 5 },
+    })
+
+    let resolvePower: ((value: boolean) => void) | undefined
+    jest.spyOn(ConcertClient.prototype, 'getPowerState').mockImplementation(
+      () => new Promise<boolean>((resolve) => {
+        resolvePower = resolve
+      }),
+    )
+
+    new ConcertPlatform(log, config, api)
+    api.emit('didFinishLaunching')
+    await Promise.resolve()
+    expect(ConcertClient.prototype.getPowerState).toHaveBeenCalledTimes(1)
+
+    // Timer fires while the launch refresh is still blocked on getPowerState.
+    await jest.advanceTimersByTimeAsync(5_000)
+    expect(ConcertClient.prototype.getPowerState).toHaveBeenCalledTimes(1)
+    expect(log.debug).toHaveBeenCalledWith(
+      'Poll tick coalesced; previous refresh still in flight',
+    )
+
+    resolvePower?.(false)
+    // Fake timers: drain microtasks only (avoid setImmediate-based settleRefresh).
+    await Promise.resolve()
+    await Promise.resolve()
+    api.emit('shutdown')
   })
 
   it('stores cached accessories via configureAccessory', () => {

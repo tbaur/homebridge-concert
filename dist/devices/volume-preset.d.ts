@@ -49,7 +49,8 @@ export declare class VolumePresetAccessory implements RefreshableAccessory {
     /**
      * Poll volume and push On iff it matches the target. Concurrent callers share
      * a single in-flight request (single-flight). Skipped while a HomeKit set is
-     * waiting for the receiver (wake can take tens of seconds).
+     * waiting for the receiver, and while the zone is last known to be in standby
+     * (volume queries are flaky there and the preset level is unchanged).
      */
     refresh(): Promise<void>;
     private runRefresh;

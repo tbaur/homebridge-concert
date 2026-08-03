@@ -515,4 +515,61 @@ describe('ConcertClient', () => {
     await expectation
     expect(setVolume.mock.calls.length).toBeGreaterThan(1)
   })
+
+  it('serializes concurrent power and volume queries onto one socket at a time', async () => {
+    const sockets: FakeSocket[] = []
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const power = client.getPowerState()
+    const volume = client.getVolume(1)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(createConnection).toHaveBeenCalledTimes(1)
+
+    sockets[0].emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+    await expect(power).resolves.toBe(true)
+
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(createConnection).toHaveBeenCalledTimes(2)
+    sockets[1].emit('data', Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 57, 0x0d]))
+    await expect(volume).resolves.toBe(57)
+  })
+
+  it('remembers last power state after successful query and set', async () => {
+    const replies = [
+      Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]),
+      Buffer.from([0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_OFF, 0x0d]),
+    ]
+    let call = 0
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => {
+        socket.emit('connect')
+        queueMicrotask(() => {
+          socket.emit('data', replies[call++])
+        })
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    expect(client.getLastPowerState(1)).toBeUndefined()
+    await expect(client.getPowerState(1)).resolves.toBe(true)
+    expect(client.getLastPowerState(1)).toBe(true)
+    await expect(client.setPower(false, 1)).resolves.toBeUndefined()
+    expect(client.getLastPowerState(1)).toBe(false)
+  })
 })

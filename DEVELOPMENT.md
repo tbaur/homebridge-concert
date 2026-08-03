@@ -40,12 +40,14 @@ docs/
 This plugin talks to a **LAN TCP** control port, so its resilience focuses on making each request robust:
 
 - **Short-lived connections** — each query/set opens a TCP socket, sends one frame, reads one response, and closes. That avoids sticky half-open sockets if the receiver drops idle clients in standby.
+- **Serialized TCP** — `ConcertClient` runs one command at a time so Power + Volume polls (and sets) never open overlapping sockets against a flaky standby stack.
 - **Bounded timeouts** — connect and request waits are capped so a stalled receiver cannot wedge Homebridge.
-- **Polling cadence** — default 90s, configurable, clamped to 5s–86400s (prevents Node's `setInterval` overflow-to-1ms behavior). Shared timer refreshes every registered handler.
+- **Polling cadence** — default 90s, configurable, clamped to 5s–86400s (prevents Node's `setInterval` overflow-to-1ms behavior). Shared timer refreshes handlers sequentially (power before volume). Overlapping ticks coalesce onto the in-flight walk so a slow standby timeout cannot stack polls.
+- **Standby volume skip** — when the client last observed the zone in standby, volume-preset polls are skipped until power is observed on again.
 - **Set/poll isolation** — HomeKit sets own a `setGeneration`; a poll that started before a set is discarded so plugin-driven changes log cleanly. Overlapping poll ticks share one in-flight request per accessory (single-flight).
 - **Query retry** — a timed-out / closed power query is retried once after a short delay before the poll is marked failed.
 - **Wake-aware volume set** — `setVolumeWhenReady` retries every 2s for up to 60s on connection errors and answer `0x85` (invalid in current state), so Shortcuts can set a volume preset after power-on without a fixed Wait. The “device is not ready” info log is deferred 30s (normal XR wake is ~20s). Polls are skipped while that set is in flight.
-- **Quiet poll failures** — the first consecutive failure logs at warn; repeats demote to debug until a successful poll recovers. Volume polls that fail (e.g. standby) report the preset Switch as Off.
+- **Quiet poll failures** — the first consecutive failure logs at warn; repeats demote to debug until a successful poll recovers. Failed polls keep the last known On value (no Off flip → fake “(external)” On on recover).
 
 ## Testing
 

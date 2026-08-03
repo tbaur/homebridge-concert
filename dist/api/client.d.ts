@@ -8,6 +8,7 @@
  *
  * Opens a short-lived connection per request. That keeps the MVP simple and
  * avoids sticky half-open sockets if the receiver drops idle clients in standby.
+ * Commands are serialized so standby does not see overlapping TCP sessions.
  */
 import net from 'node:net';
 import type { PluginLogger } from '../types';
@@ -43,8 +44,23 @@ export declare class ConcertClient {
     private readonly createConnection;
     /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
     private readonly volumeQueryInFlight;
+    /** Last successfully observed power state per zone. */
+    private readonly lastPowerOnByZone;
+    /**
+     * Serialize TCP commands. Nested work inside an exclusive section must call
+     * unlocked helpers (not public methods) to avoid deadlock.
+     */
+    private sendQueue;
     constructor(options: ConcertClientOptions);
     private resolveZone;
+    /**
+     * Last known power state for the zone, if a query or set has succeeded.
+     * `undefined` until the first successful observation.
+     */
+    getLastPowerState(zone?: number): boolean | undefined;
+    private rememberPowerState;
+    /** Run `fn` with exclusive access to the TCP send path. */
+    private withExclusive;
     /**
      * Retry a ConnectionError once — XR units sometimes accept TCP then stay
      * silent for a single request before answering normally.
@@ -57,10 +73,13 @@ export declare class ConcertClient {
      * stay silent for a single request before answering normally.
      */
     getPowerState(zone?: number): Promise<boolean>;
+    private getPowerStateUnlocked;
     /** Power the zone on (discrete RC5 Power On). */
     powerOn(zone?: number): Promise<void>;
+    private powerOnUnlocked;
     /** Put the zone into standby (discrete RC5 Power Off). */
     powerStandby(zone?: number): Promise<void>;
+    private powerStandbyUnlocked;
     /**
      * Set power from a boolean HomeKit On value.
      *
@@ -77,6 +96,7 @@ export declare class ConcertClient {
      * Retries once on ConnectionError (same as power query).
      */
     getVolume(zone?: number): Promise<number>;
+    private getVolumeUnlocked;
     /**
      * Set the absolute volume level (0–99) for the zone.
      *
@@ -90,6 +110,7 @@ export declare class ConcertClient {
      * Cold boot often reports power On before volume is accepted (`0x85` / timeouts).
      * Retries every {@link VOLUME_READY_RETRY_INTERVAL_MS} until success or
      * {@link VOLUME_READY_TIMEOUT_MS}, so Shortcuts can Set Volume without a fixed Wait.
+     * Each attempt takes the TCP lock briefly; the wait between attempts does not.
      */
     setVolumeWhenReady(level: number, zone?: number, options?: SetVolumeWhenReadyOptions): Promise<void>;
     /** True when a power query reports the desired on/off state. */

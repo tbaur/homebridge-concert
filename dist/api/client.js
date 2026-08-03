@@ -9,6 +9,7 @@
  *
  * Opens a short-lived connection per request. That keeps the MVP simple and
  * avoids sticky half-open sockets if the receiver drops idle clients in standby.
+ * Commands are serialized so standby does not see overlapping TCP sessions.
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -34,6 +35,13 @@ class ConcertClient {
     createConnection;
     /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
     volumeQueryInFlight = new Map();
+    /** Last successfully observed power state per zone. */
+    lastPowerOnByZone = new Map();
+    /**
+     * Serialize TCP commands. Nested work inside an exclusive section must call
+     * unlocked helpers (not public methods) to avoid deadlock.
+     */
+    sendQueue = Promise.resolve();
     constructor(options) {
         this.host = options.host;
         this.port = options.port ?? settings_1.DEFAULT_CONTROL_PORT;
@@ -45,6 +53,22 @@ class ConcertClient {
     }
     resolveZone(zone) {
         return zone === 1 || zone === 2 ? zone : this.defaultZone;
+    }
+    /**
+     * Last known power state for the zone, if a query or set has succeeded.
+     * `undefined` until the first successful observation.
+     */
+    getLastPowerState(zone) {
+        return this.lastPowerOnByZone.get(this.resolveZone(zone));
+    }
+    rememberPowerState(zone, on) {
+        this.lastPowerOnByZone.set(zone, on);
+    }
+    /** Run `fn` with exclusive access to the TCP send path. */
+    withExclusive(fn) {
+        const run = this.sendQueue.then(fn, fn);
+        this.sendQueue = run.then(() => undefined, () => undefined);
+        return run;
     }
     /**
      * Retry a ConnectionError once — XR units sometimes accept TCP then stay
@@ -77,22 +101,39 @@ class ConcertClient {
      */
     async getPowerState(zone) {
         const resolvedZone = this.resolveZone(zone);
-        return this.withQueryRetry('Power query', async () => {
-            const response = await this.send((0, protocol_1.buildPowerQuery)(resolvedZone), protocol_1.COMMAND_POWER, resolvedZone);
+        return this.withExclusive(() => this.getPowerStateUnlocked(resolvedZone));
+    }
+    async getPowerStateUnlocked(zone) {
+        const on = await this.withQueryRetry('Power query', async () => {
+            const response = await this.send((0, protocol_1.buildPowerQuery)(zone), protocol_1.COMMAND_POWER, zone);
             this.assertOk(response, 'power query');
             return (0, protocol_1.isPowerOn)(response.data);
         });
+        this.rememberPowerState(zone, on);
+        return on;
     }
     /** Power the zone on (discrete RC5 Power On). */
     async powerOn(zone) {
         const resolvedZone = this.resolveZone(zone);
-        const response = await this.send((0, protocol_1.buildPowerOn)(resolvedZone), POWER_SET_RESPONSE_COMMANDS, resolvedZone);
+        return this.withExclusive(async () => {
+            await this.powerOnUnlocked(resolvedZone);
+            this.rememberPowerState(resolvedZone, true);
+        });
+    }
+    async powerOnUnlocked(zone) {
+        const response = await this.send((0, protocol_1.buildPowerOn)(zone), POWER_SET_RESPONSE_COMMANDS, zone);
         this.assertOk(response, 'power on');
     }
     /** Put the zone into standby (discrete RC5 Power Off). */
     async powerStandby(zone) {
         const resolvedZone = this.resolveZone(zone);
-        const response = await this.send((0, protocol_1.buildPowerStandby)(resolvedZone), POWER_SET_RESPONSE_COMMANDS, resolvedZone);
+        return this.withExclusive(async () => {
+            await this.powerStandbyUnlocked(resolvedZone);
+            this.rememberPowerState(resolvedZone, false);
+        });
+    }
+    async powerStandbyUnlocked(zone) {
+        const response = await this.send((0, protocol_1.buildPowerStandby)(zone), POWER_SET_RESPONSE_COMMANDS, zone);
         this.assertOk(response, 'standby');
     }
     /**
@@ -104,24 +145,27 @@ class ConcertClient {
      */
     async setPower(on, zone) {
         const resolvedZone = this.resolveZone(zone);
-        try {
-            if (on) {
-                await this.powerOn(resolvedZone);
+        return this.withExclusive(async () => {
+            try {
+                if (on) {
+                    await this.powerOnUnlocked(resolvedZone);
+                }
+                else {
+                    await this.powerStandbyUnlocked(resolvedZone);
+                }
+                this.rememberPowerState(resolvedZone, on);
             }
-            else {
-                await this.powerStandby(resolvedZone);
-            }
-        }
-        catch (error) {
-            if (!(error instanceof errors_1.ConnectionError)) {
+            catch (error) {
+                if (!(error instanceof errors_1.ConnectionError)) {
+                    throw error;
+                }
+                this.log.debug?.(`Power ${on ? 'on' : 'standby'} ack missing (${error.message}); verifying state`);
+                if (await this.verifyPowerState(on, resolvedZone)) {
+                    return;
+                }
                 throw error;
             }
-            this.log.debug?.(`Power ${on ? 'on' : 'standby'} ack missing (${error.message}); verifying state`);
-            if (await this.verifyPowerState(on, resolvedZone)) {
-                return;
-            }
-            throw error;
-        }
+        });
     }
     /**
      * Query the absolute volume level (0–99) for the zone.
@@ -136,15 +180,19 @@ class ConcertClient {
         if (existing) {
             return existing;
         }
-        const pending = this.withQueryRetry('Volume query', async () => {
-            const response = await this.send((0, protocol_1.buildVolumeQuery)(resolvedZone), protocol_1.COMMAND_VOLUME, resolvedZone);
-            this.assertOk(response, 'volume query');
-            return (0, protocol_1.parseVolume)(response.data);
-        }).finally(() => {
+        const pending = this.withExclusive(() => this.getVolumeUnlocked(resolvedZone))
+            .finally(() => {
             this.volumeQueryInFlight.delete(resolvedZone);
         });
         this.volumeQueryInFlight.set(resolvedZone, pending);
         return pending;
+    }
+    async getVolumeUnlocked(zone) {
+        return this.withQueryRetry('Volume query', async () => {
+            const response = await this.send((0, protocol_1.buildVolumeQuery)(zone), protocol_1.COMMAND_VOLUME, zone);
+            this.assertOk(response, 'volume query');
+            return (0, protocol_1.parseVolume)(response.data);
+        });
     }
     /**
      * Set the absolute volume level (0–99) for the zone.
@@ -154,20 +202,25 @@ class ConcertClient {
      */
     async setVolume(level, zone) {
         const resolvedZone = this.resolveZone(zone);
-        try {
-            const response = await this.send((0, protocol_1.buildVolumeSet)(resolvedZone, level), protocol_1.COMMAND_VOLUME, resolvedZone);
-            this.assertOk(response, 'volume set');
-        }
-        catch (error) {
-            if (!(error instanceof errors_1.ConnectionError)) {
+        return this.withExclusive(async () => {
+            try {
+                const response = await this.send((0, protocol_1.buildVolumeSet)(resolvedZone, level), protocol_1.COMMAND_VOLUME, resolvedZone);
+                this.assertOk(response, 'volume set');
+                // Volume is only accepted while powered; keep standby-skip accurate.
+                this.rememberPowerState(resolvedZone, true);
+            }
+            catch (error) {
+                if (!(error instanceof errors_1.ConnectionError)) {
+                    throw error;
+                }
+                this.log.debug?.(`Volume set ack missing (${error.message}); verifying level ${level}`);
+                if (await this.verifyVolumeLevel(level, resolvedZone)) {
+                    this.rememberPowerState(resolvedZone, true);
+                    return;
+                }
                 throw error;
             }
-            this.log.debug?.(`Volume set ack missing (${error.message}); verifying level ${level}`);
-            if (await this.verifyVolumeLevel(level, resolvedZone)) {
-                return;
-            }
-            throw error;
-        }
+        });
     }
     /**
      * Set volume, retrying politely while the receiver finishes waking.
@@ -175,6 +228,7 @@ class ConcertClient {
      * Cold boot often reports power On before volume is accepted (`0x85` / timeouts).
      * Retries every {@link VOLUME_READY_RETRY_INTERVAL_MS} until success or
      * {@link VOLUME_READY_TIMEOUT_MS}, so Shortcuts can Set Volume without a fixed Wait.
+     * Each attempt takes the TCP lock briefly; the wait between attempts does not.
      */
     async setVolumeWhenReady(level, zone, options) {
         const resolvedZone = this.resolveZone(zone);
@@ -216,7 +270,7 @@ class ConcertClient {
         for (let attempt = 0; attempt < settings_1.POWER_VERIFY_ATTEMPTS; attempt++) {
             await sleep(settings_1.POWER_SETTLE_MS);
             try {
-                const actual = await this.getPowerState(zone);
+                const actual = await this.getPowerStateUnlocked(zone);
                 if (actual === expectedOn) {
                     this.log.debug?.(`Power state verified as ${expectedOn ? 'on' : 'standby'} after missing ack`);
                     return true;
@@ -234,7 +288,7 @@ class ConcertClient {
         for (let attempt = 0; attempt < settings_1.POWER_VERIFY_ATTEMPTS; attempt++) {
             await sleep(settings_1.POWER_SETTLE_MS);
             try {
-                const actual = await this.getVolume(zone);
+                const actual = await this.getVolumeUnlocked(zone);
                 if (actual === expectedLevel) {
                     this.log.debug?.(`Volume verified as ${expectedLevel} after missing ack`);
                     return true;

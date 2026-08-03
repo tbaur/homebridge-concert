@@ -20,9 +20,10 @@ Control your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple HomeKit 
 
 ### Reliability
 - **LAN IP control** — Talks to the unit over TCP port `50000` using the AudioControl X/XR automation protocol
-- **State polling** — Refreshes accessory state on a configurable interval (default every 90s; clamped 5s–86400s)
+- **State polling** — Refreshes accessory state on a configurable interval (default every 90s; clamped 5s–86400s); power before volume; overlapping ticks coalesce; volume polls skip while the zone is last known standby
+- **Serialized TCP** — One in-flight control command at a time (short-lived sockets) so standby does not see overlapping sessions
 - **Bounded timeouts** — Connect and request timeouts so a stalled receiver cannot hang Homebridge; response buffers are capped
-- **Resilient polling** — One automatic retry on a silent/timed-out power query; the first poll failure warns briefly, then further failures demote to debug until recovery
+- **Resilient polling** — One automatic retry on a silent/timed-out power query; poll failures keep last known On; the first failure warns briefly, then further failures demote to debug until recovery
 - **Wake-aware volume set** — Volume-preset On retries every 2s for up to 60s on not-ready errors (`0x85` / timeouts), so Shortcuts can set volume after power-on without a fixed Wait. A “device is not ready” info log is deferred until 30s so a normal ~20s XR wake stays quiet
 - **Startup config validation** — Missing/invalid host or accessories is fatal (cached accessories are cleared); out-of-range port/refreshRate warn and fall back/clamp
 

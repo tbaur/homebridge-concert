@@ -18,6 +18,16 @@ class FakeHapStatusError extends Error {
   }
 }
 
+/** Minimal client mock; tests override methods as needed. */
+function mockClient(overrides: Record<string, unknown> = {}): ConcertClient {
+  return {
+    setVolumeWhenReady: jest.fn(),
+    getVolume: jest.fn(),
+    getLastPowerState: jest.fn().mockReturnValue(undefined),
+    ...overrides,
+  } as unknown as ConcertClient
+}
+
 function createPlatform(volume = 57) {
   const onChar = {
     onGet: jest.fn().mockReturnThis(),
@@ -86,10 +96,9 @@ function createPlatform(volume = 57) {
 describe('VolumePresetAccessory', () => {
   it('sets volume when turned On', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
-      getVolume: jest.fn(),
-    } as unknown as ConcertClient
+    })
 
     new VolumePresetAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
@@ -106,10 +115,10 @@ describe('VolumePresetAccessory', () => {
 
   it('skips setVolumeWhenReady when already at the preset', async () => {
     const { platform, accessory, onChar } = createPlatform()
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn().mockResolvedValue(57),
-    } as unknown as ConcertClient
+    })
 
     const handler = new VolumePresetAccessory(platform, accessory, client)
     await handler.refresh()
@@ -124,12 +133,11 @@ describe('VolumePresetAccessory', () => {
   it('single-flights concurrent On writes into one setVolumeWhenReady', async () => {
     const { platform, accessory, onChar } = createPlatform()
     let resolveSet: (() => void) | undefined
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
         resolveSet = resolve
       })),
-      getVolume: jest.fn(),
-    } as unknown as ConcertClient
+    })
 
     new VolumePresetAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
@@ -147,10 +155,9 @@ describe('VolumePresetAccessory', () => {
 
   it('does not re-set after a successful On when HomeKit repeats the write', async () => {
     const { platform, accessory, onChar } = createPlatform()
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
-      getVolume: jest.fn(),
-    } as unknown as ConcertClient
+    })
 
     new VolumePresetAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
@@ -164,10 +171,10 @@ describe('VolumePresetAccessory', () => {
 
   it('treats Off as a no-op and snaps the characteristic back', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn().mockResolvedValue(57),
-    } as unknown as ConcertClient
+    })
 
     const handler = new VolumePresetAccessory(platform, accessory, client)
     await handler.refresh()
@@ -180,12 +187,11 @@ describe('VolumePresetAccessory', () => {
 
   it('reports On only when polled volume matches the target', async () => {
     const { platform, accessory, switchService } = createPlatform()
-    const client = {
-      setVolumeWhenReady: jest.fn(),
+    const client = mockClient({
       getVolume: jest.fn()
         .mockResolvedValueOnce(40)
         .mockResolvedValueOnce(57),
-    } as unknown as ConcertClient
+    })
 
     const handler = new VolumePresetAccessory(platform, accessory, client)
     await handler.refresh()
@@ -198,31 +204,49 @@ describe('VolumePresetAccessory', () => {
     )
   })
 
-  it('marks Off when volume poll fails after being On', async () => {
-    const { platform, accessory, switchService } = createPlatform()
-    const client = {
-      setVolumeWhenReady: jest.fn(),
+  it('keeps last known On when volume poll fails after being On', async () => {
+    const { platform, accessory, switchService, onChar } = createPlatform()
+    const client = mockClient({
+      getLastPowerState: jest.fn().mockReturnValue(true),
       getVolume: jest.fn()
         .mockResolvedValueOnce(57)
         .mockRejectedValueOnce(new Error('standby')),
-    } as unknown as ConcertClient
+    })
 
     const handler = new VolumePresetAccessory(platform, accessory, client)
     await handler.refresh()
     await handler.refresh()
 
-    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', false)
+    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
+    expect(switchService.updateCharacteristic).not.toHaveBeenCalledWith('On', false)
     expect(platform.log.warn).toHaveBeenCalledWith(
       'XR-8S Volume: poll failed: standby',
+    )
+    const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
+    expect(getHandler()).toBe(true)
+  })
+
+  it('skips volume poll when the zone is last known standby', async () => {
+    const { platform, accessory } = createPlatform()
+    const client = mockClient({
+      getLastPowerState: jest.fn().mockReturnValue(false),
+      getVolume: jest.fn().mockResolvedValue(57),
+    })
+
+    const handler = new VolumePresetAccessory(platform, accessory, client)
+    await handler.refresh()
+
+    expect(client.getVolume).not.toHaveBeenCalled()
+    expect(platform.log.debug).toHaveBeenCalledWith(
+      'XR-8S Volume: skipping volume poll (zone in standby)',
     )
   })
 
   it('reverts and throws HapStatusError when setVolumeWhenReady fails', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockRejectedValue(new Error('offline')),
-      getVolume: jest.fn(),
-    } as unknown as ConcertClient
+    })
 
     new VolumePresetAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
@@ -233,15 +257,14 @@ describe('VolumePresetAccessory', () => {
 
   it('logs a friendly not-ready message when onWaiting fires', async () => {
     const { platform, accessory, onChar } = createPlatform()
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockImplementation(
         (_level: number, _zone: number, options?: { onWaiting?: () => void }) => {
           options?.onWaiting?.()
           return Promise.reject(new Error('volume set rejected: invalid command in current state'))
         },
       ),
-      getVolume: jest.fn(),
-    } as unknown as ConcertClient
+    })
 
     new VolumePresetAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
@@ -258,20 +281,14 @@ describe('VolumePresetAccessory', () => {
   it('requires volume in context', () => {
     const { platform, accessory } = createPlatform()
     ;(accessory.context as { volume?: number }).volume = undefined
-    const client = {
-      setVolumeWhenReady: jest.fn(),
-      getVolume: jest.fn(),
-    } as unknown as ConcertClient
+    const client = mockClient()
 
     expect(() => new VolumePresetAccessory(platform, accessory, client)).toThrow(/missing volume/)
   })
 
   it('returns the cached On value from get', () => {
     const { platform, accessory, onChar } = createPlatform()
-    const client = {
-      setVolumeWhenReady: jest.fn(),
-      getVolume: jest.fn(),
-    } as unknown as ConcertClient
+    const client = mockClient()
 
     new VolumePresetAccessory(platform, accessory, client)
     const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
@@ -281,12 +298,11 @@ describe('VolumePresetAccessory', () => {
   it('single-flights concurrent refresh calls', async () => {
     const { platform, accessory } = createPlatform()
     let resolvePoll: ((value: number) => void) | undefined
-    const client = {
-      setVolumeWhenReady: jest.fn(),
+    const client = mockClient({
       getVolume: jest.fn().mockImplementation(() => new Promise<number>((resolve) => {
         resolvePoll = resolve
       })),
-    } as unknown as ConcertClient
+    })
 
     const handler = new VolumePresetAccessory(platform, accessory, client)
     const first = handler.refresh()
@@ -298,13 +314,12 @@ describe('VolumePresetAccessory', () => {
 
   it('logs recovery after a successful poll following failures', async () => {
     const { platform, accessory } = createPlatform()
-    const client = {
-      setVolumeWhenReady: jest.fn(),
+    const client = mockClient({
       getVolume: jest.fn()
         .mockRejectedValueOnce(new Error('timeout'))
         .mockRejectedValueOnce(new Error('timeout'))
         .mockResolvedValueOnce(40),
-    } as unknown as ConcertClient
+    })
 
     const handler = new VolumePresetAccessory(platform, accessory, client)
     await handler.refresh()
@@ -320,12 +335,12 @@ describe('VolumePresetAccessory', () => {
   it('discards a stale poll that finishes after a set', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     let resolvePoll: ((value: number) => void) | undefined
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockResolvedValue(undefined),
       getVolume: jest.fn().mockImplementation(() => new Promise<number>((resolve) => {
         resolvePoll = resolve
       })),
-    } as unknown as ConcertClient
+    })
 
     const handler = new VolumePresetAccessory(platform, accessory, client)
     const pendingRefresh = handler.refresh()
@@ -342,12 +357,12 @@ describe('VolumePresetAccessory', () => {
   it('skips poll ticks while a volume set is in flight', async () => {
     const { platform, accessory, onChar } = createPlatform()
     let resolveSet: (() => void) | undefined
-    const client = {
+    const client = mockClient({
       setVolumeWhenReady: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
         resolveSet = resolve
       })),
       getVolume: jest.fn().mockResolvedValue(40),
-    } as unknown as ConcertClient
+    })
 
     const handler = new VolumePresetAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>

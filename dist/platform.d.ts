@@ -22,6 +22,8 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     private readonly handlers;
     private client?;
     private pollTimer?;
+    /** In-flight shared poll; overlapping timer ticks join/skip instead of stacking. */
+    private refreshAllInFlight?;
     private stopped;
     /** True when startup validation failed; the platform stays inert. */
     private disabled;
@@ -55,5 +57,15 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     /** Unregister cached accessories that are no longer in the configured set. */
     private removeStaleAccessories;
     private startPolling;
+    /**
+     * Refresh handlers sequentially (power before volume). Awaits each so volume
+     * sees an updated last-known power state before deciding whether to skip.
+     *
+     * Single-flight: a timer tick that fires while a previous refresh is still
+     * running joins that promise instead of starting a second walk (important when
+     * refreshRate is low and a standby timeout makes one tick last several seconds).
+     */
+    private refreshAll;
+    private runRefreshAll;
 }
 //# sourceMappingURL=platform.d.ts.map

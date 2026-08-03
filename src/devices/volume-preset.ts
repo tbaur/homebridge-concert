@@ -137,10 +137,17 @@ export class VolumePresetAccessory implements RefreshableAccessory {
   /**
    * Poll volume and push On iff it matches the target. Concurrent callers share
    * a single in-flight request (single-flight). Skipped while a HomeKit set is
-   * waiting for the receiver (wake can take tens of seconds).
+   * waiting for the receiver, and while the zone is last known to be in standby
+   * (volume queries are flaky there and the preset level is unchanged).
    */
   async refresh(): Promise<void> {
     if (this.setInFlight) {
+      return
+    }
+    if (this.client.getLastPowerState(this.zone) === false) {
+      this.platform.log.debug?.(
+        `${this.accessory.displayName}: skipping volume poll (zone in standby)`,
+      )
       return
     }
     if (this.refreshInFlight) {
@@ -179,11 +186,8 @@ export class VolumePresetAccessory implements RefreshableAccessory {
       if (setGenerationAtStart !== this.setGeneration || this.setInFlight) {
         return
       }
-      // Standby / unreachable: treat as not-at-preset without tearing down.
-      if (this.isAtTarget) {
-        this.isAtTarget = false
-        this.switchService.updateCharacteristic(this.platform.Characteristic.On, false)
-      }
+      // Keep last known On (same as power) — a transient timeout must not flip
+      // the preset Off and then log a fake "(external)" On on the next success.
       const message = error instanceof Error ? error.message : String(error)
       if (!this.pollFailureActive) {
         this.pollFailureActive = true
