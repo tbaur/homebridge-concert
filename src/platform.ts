@@ -53,6 +53,8 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   private readonly handlers: RefreshableAccessory[] = []
   private client?: ConcertClient
   private pollTimer?: ReturnType<typeof setInterval>
+  /** In-flight shared poll; overlapping timer ticks join/skip instead of stacking. */
+  private refreshAllInFlight?: Promise<void>
   private stopped = false
   /** True when startup validation failed; the platform stays inert. */
   private disabled = false
@@ -153,7 +155,13 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     })
     this.handlers.length = 0
 
-    for (const accessoryConfig of resolved) {
+    // Power first so a poll tick observes standby before volume decides to skip.
+    const ordered = [
+      ...resolved.filter((accessory) => accessory.kind === 'power'),
+      ...resolved.filter((accessory) => accessory.kind !== 'power'),
+    ]
+
+    for (const accessoryConfig of ordered) {
       const uuid = this.uuidFor(host, port, accessoryConfig)
       let accessory = this.accessories.find((cached) => cached.UUID === uuid)
       const previous = accessory?.context as AccessoryContext | undefined
@@ -193,10 +201,7 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     }
 
     this.startPolling()
-
-    for (const handler of this.handlers) {
-      void handler.refresh()
-    }
+    void this.refreshAll()
   }
 
   private createHandler(
@@ -268,12 +273,39 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     )
     this.log.info(`Polling accessory state every ${refreshSec}s`)
     this.pollTimer = setInterval(() => {
-      if (this.stopped || this.handlers.length === 0) {
+      void this.refreshAll()
+    }, refreshSec * 1000)
+  }
+
+  /**
+   * Refresh handlers sequentially (power before volume). Awaits each so volume
+   * sees an updated last-known power state before deciding whether to skip.
+   *
+   * Single-flight: a timer tick that fires while a previous refresh is still
+   * running joins that promise instead of starting a second walk (important when
+   * refreshRate is low and a standby timeout makes one tick last several seconds).
+   */
+  private refreshAll(): Promise<void> {
+    if (this.stopped || this.handlers.length === 0) {
+      return Promise.resolve()
+    }
+    if (this.refreshAllInFlight) {
+      this.log.debug('Poll tick coalesced; previous refresh still in flight')
+      return this.refreshAllInFlight
+    }
+
+    this.refreshAllInFlight = this.runRefreshAll().finally(() => {
+      this.refreshAllInFlight = undefined
+    })
+    return this.refreshAllInFlight
+  }
+
+  private async runRefreshAll(): Promise<void> {
+    for (const handler of this.handlers) {
+      if (this.stopped) {
         return
       }
-      for (const handler of this.handlers) {
-        void handler.refresh()
-      }
-    }, refreshSec * 1000)
+      await handler.refresh()
+    }
   }
 }

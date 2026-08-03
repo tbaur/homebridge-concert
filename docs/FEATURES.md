@@ -12,9 +12,12 @@
 - ✅ Configurable state polling (90s default, 5s–86400s clamp)
 - ✅ Bounded connect and request timeouts with a capped response buffer
 - ✅ Short-lived TCP connections per command (no sticky idle sockets)
+- ✅ Serialized TCP commands (one in-flight socket) so standby does not see overlapping sessions
 - ✅ Startup config validation (fatal host/accessories errors; warn-and-default for port/refreshRate)
 - ✅ Stale-accessory cleanup when accessories are removed or identity changes; cached accessories cleared on invalid config
 - ✅ Set/poll race protection and single-flight refresh per accessory
+- ✅ Sequential poll ticks (power before volume); overlapping ticks coalesce; volume polls skip while the zone is last known standby
+- ✅ Poll failures keep last known On (volume matches power); no fake “(external)” flip on timeout recover
 - ✅ One automatic retry on transient power-query timeouts
 - ✅ Quiet consecutive poll failures after the first warn
 - ✅ Homebridge UI settings form via `config.schema.json`

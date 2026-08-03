@@ -8,6 +8,7 @@
  *
  * Opens a short-lived connection per request. That keeps the MVP simple and
  * avoids sticky half-open sockets if the receiver drops idle clients in standby.
+ * Commands are serialized so standby does not see overlapping TCP sessions.
  */
 
 import net from 'node:net'
@@ -84,6 +85,13 @@ export class ConcertClient {
   private readonly createConnection: typeof net.createConnection
   /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
   private readonly volumeQueryInFlight = new Map<number, Promise<number>>()
+  /** Last successfully observed power state per zone. */
+  private readonly lastPowerOnByZone = new Map<number, boolean>()
+  /**
+   * Serialize TCP commands. Nested work inside an exclusive section must call
+   * unlocked helpers (not public methods) to avoid deadlock.
+   */
+  private sendQueue: Promise<void> = Promise.resolve()
 
   constructor(options: ConcertClientOptions) {
     this.host = options.host
@@ -97,6 +105,25 @@ export class ConcertClient {
 
   private resolveZone(zone?: number): number {
     return zone === 1 || zone === 2 ? zone : this.defaultZone
+  }
+
+  /**
+   * Last known power state for the zone, if a query or set has succeeded.
+   * `undefined` until the first successful observation.
+   */
+  getLastPowerState(zone?: number): boolean | undefined {
+    return this.lastPowerOnByZone.get(this.resolveZone(zone))
+  }
+
+  private rememberPowerState(zone: number, on: boolean): void {
+    this.lastPowerOnByZone.set(zone, on)
+  }
+
+  /** Run `fn` with exclusive access to the TCP send path. */
+  private withExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.sendQueue.then(fn, fn)
+    this.sendQueue = run.then(() => undefined, () => undefined)
+    return run
   }
 
   /**
@@ -135,27 +162,47 @@ export class ConcertClient {
    */
   async getPowerState(zone?: number): Promise<boolean> {
     const resolvedZone = this.resolveZone(zone)
-    return this.withQueryRetry('Power query', async () => {
-      const response = await this.send(buildPowerQuery(resolvedZone), COMMAND_POWER, resolvedZone)
+    return this.withExclusive(() => this.getPowerStateUnlocked(resolvedZone))
+  }
+
+  private async getPowerStateUnlocked(zone: number): Promise<boolean> {
+    const on = await this.withQueryRetry('Power query', async () => {
+      const response = await this.send(buildPowerQuery(zone), COMMAND_POWER, zone)
       this.assertOk(response, 'power query')
       return isPowerOn(response.data)
     })
+    this.rememberPowerState(zone, on)
+    return on
   }
 
   /** Power the zone on (discrete RC5 Power On). */
   async powerOn(zone?: number): Promise<void> {
     const resolvedZone = this.resolveZone(zone)
-    const response = await this.send(buildPowerOn(resolvedZone), POWER_SET_RESPONSE_COMMANDS, resolvedZone)
+    return this.withExclusive(async () => {
+      await this.powerOnUnlocked(resolvedZone)
+      this.rememberPowerState(resolvedZone, true)
+    })
+  }
+
+  private async powerOnUnlocked(zone: number): Promise<void> {
+    const response = await this.send(buildPowerOn(zone), POWER_SET_RESPONSE_COMMANDS, zone)
     this.assertOk(response, 'power on')
   }
 
   /** Put the zone into standby (discrete RC5 Power Off). */
   async powerStandby(zone?: number): Promise<void> {
     const resolvedZone = this.resolveZone(zone)
+    return this.withExclusive(async () => {
+      await this.powerStandbyUnlocked(resolvedZone)
+      this.rememberPowerState(resolvedZone, false)
+    })
+  }
+
+  private async powerStandbyUnlocked(zone: number): Promise<void> {
     const response = await this.send(
-      buildPowerStandby(resolvedZone),
+      buildPowerStandby(zone),
       POWER_SET_RESPONSE_COMMANDS,
-      resolvedZone,
+      zone,
     )
     this.assertOk(response, 'standby')
   }
@@ -169,24 +216,27 @@ export class ConcertClient {
    */
   async setPower(on: boolean, zone?: number): Promise<void> {
     const resolvedZone = this.resolveZone(zone)
-    try {
-      if (on) {
-        await this.powerOn(resolvedZone)
-      } else {
-        await this.powerStandby(resolvedZone)
-      }
-    } catch (error) {
-      if (!(error instanceof ConnectionError)) {
+    return this.withExclusive(async () => {
+      try {
+        if (on) {
+          await this.powerOnUnlocked(resolvedZone)
+        } else {
+          await this.powerStandbyUnlocked(resolvedZone)
+        }
+        this.rememberPowerState(resolvedZone, on)
+      } catch (error) {
+        if (!(error instanceof ConnectionError)) {
+          throw error
+        }
+        this.log.debug?.(
+          `Power ${on ? 'on' : 'standby'} ack missing (${error.message}); verifying state`,
+        )
+        if (await this.verifyPowerState(on, resolvedZone)) {
+          return
+        }
         throw error
       }
-      this.log.debug?.(
-        `Power ${on ? 'on' : 'standby'} ack missing (${error.message}); verifying state`,
-      )
-      if (await this.verifyPowerState(on, resolvedZone)) {
-        return
-      }
-      throw error
-    }
+    })
   }
 
   /**
@@ -203,16 +253,21 @@ export class ConcertClient {
       return existing
     }
 
-    const pending = this.withQueryRetry('Volume query', async () => {
-      const response = await this.send(buildVolumeQuery(resolvedZone), COMMAND_VOLUME, resolvedZone)
-      this.assertOk(response, 'volume query')
-      return parseVolume(response.data)
-    }).finally(() => {
-      this.volumeQueryInFlight.delete(resolvedZone)
-    })
+    const pending = this.withExclusive(() => this.getVolumeUnlocked(resolvedZone))
+      .finally(() => {
+        this.volumeQueryInFlight.delete(resolvedZone)
+      })
 
     this.volumeQueryInFlight.set(resolvedZone, pending)
     return pending
+  }
+
+  private async getVolumeUnlocked(zone: number): Promise<number> {
+    return this.withQueryRetry('Volume query', async () => {
+      const response = await this.send(buildVolumeQuery(zone), COMMAND_VOLUME, zone)
+      this.assertOk(response, 'volume query')
+      return parseVolume(response.data)
+    })
   }
 
   /**
@@ -223,21 +278,30 @@ export class ConcertClient {
    */
   async setVolume(level: number, zone?: number): Promise<void> {
     const resolvedZone = this.resolveZone(zone)
-    try {
-      const response = await this.send(buildVolumeSet(resolvedZone, level), COMMAND_VOLUME, resolvedZone)
-      this.assertOk(response, 'volume set')
-    } catch (error) {
-      if (!(error instanceof ConnectionError)) {
+    return this.withExclusive(async () => {
+      try {
+        const response = await this.send(
+          buildVolumeSet(resolvedZone, level),
+          COMMAND_VOLUME,
+          resolvedZone,
+        )
+        this.assertOk(response, 'volume set')
+        // Volume is only accepted while powered; keep standby-skip accurate.
+        this.rememberPowerState(resolvedZone, true)
+      } catch (error) {
+        if (!(error instanceof ConnectionError)) {
+          throw error
+        }
+        this.log.debug?.(
+          `Volume set ack missing (${error.message}); verifying level ${level}`,
+        )
+        if (await this.verifyVolumeLevel(level, resolvedZone)) {
+          this.rememberPowerState(resolvedZone, true)
+          return
+        }
         throw error
       }
-      this.log.debug?.(
-        `Volume set ack missing (${error.message}); verifying level ${level}`,
-      )
-      if (await this.verifyVolumeLevel(level, resolvedZone)) {
-        return
-      }
-      throw error
-    }
+    })
   }
 
   /**
@@ -246,6 +310,7 @@ export class ConcertClient {
    * Cold boot often reports power On before volume is accepted (`0x85` / timeouts).
    * Retries every {@link VOLUME_READY_RETRY_INTERVAL_MS} until success or
    * {@link VOLUME_READY_TIMEOUT_MS}, so Shortcuts can Set Volume without a fixed Wait.
+   * Each attempt takes the TCP lock briefly; the wait between attempts does not.
    */
   async setVolumeWhenReady(
     level: number,
@@ -297,7 +362,7 @@ export class ConcertClient {
     for (let attempt = 0; attempt < POWER_VERIFY_ATTEMPTS; attempt++) {
       await sleep(POWER_SETTLE_MS)
       try {
-        const actual = await this.getPowerState(zone)
+        const actual = await this.getPowerStateUnlocked(zone)
         if (actual === expectedOn) {
           this.log.debug?.(
             `Power state verified as ${expectedOn ? 'on' : 'standby'} after missing ack`,
@@ -317,7 +382,7 @@ export class ConcertClient {
     for (let attempt = 0; attempt < POWER_VERIFY_ATTEMPTS; attempt++) {
       await sleep(POWER_SETTLE_MS)
       try {
-        const actual = await this.getVolume(zone)
+        const actual = await this.getVolumeUnlocked(zone)
         if (actual === expectedLevel) {
           this.log.debug?.(
             `Volume verified as ${expectedLevel} after missing ack`,
