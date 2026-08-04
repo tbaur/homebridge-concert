@@ -200,7 +200,7 @@ describe('SourcePresetAccessory', () => {
     await handler.refresh()
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
     expect(platform.log.info).toHaveBeenCalledWith(
-      expect.stringContaining('(source cd, external)'),
+      expect.stringContaining('(source CD, external)'),
     )
   })
 
