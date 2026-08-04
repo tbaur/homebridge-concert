@@ -78,7 +78,7 @@ Or in `config.json`:
         },
         {
           "type": "sourcePreset",
-          "name": "XR-8S CD",
+          "name": "XR-8S Source",
           "zone": 1,
           "source": "CD"
         }
@@ -100,9 +100,9 @@ Switches appear in the Home app after restart.
 Typical listen shortcut:
 
 1. If **XR-8S Power** is Off → turn On
-2. If **XR-8S CD** is Off → turn On (selects CD; retries while waking)
+2. If **XR-8S Source** is Off → turn On (selects CD; retries while waking)
 3. If **XR-8S Volume** is Off → turn On (sets volume to 57; retries while waking)
-4. Start your playlist
+4. Start your playlist on the source
 
 Shutdown: turn **XR-8S Power** Off (standby).
 
@@ -111,7 +111,7 @@ Shutdown: turn **XR-8S Power** Off (standby).
 ```text
 [Concert] Registering accessory "XR-8S Power" (z1:power) at 192.168.1.50:50000
 [Concert] Registering accessory "XR-8S Volume" (z1:vol:57) at 192.168.1.50:50000
-[Concert] Registering accessory "XR-8S CD" (z1:src:cd) at 192.168.1.50:50000
+[Concert] Registering accessory "XR-8S Source" (z1:src:cd) at 192.168.1.50:50000
 [Concert] Polling accessory state every 90s
 ```
 
@@ -119,7 +119,7 @@ After a listen Shortcut:
 
 ```text
 [Concert] XR-8S Power: ON
-[Concert] XR-8S CD: SET CD
+[Concert] XR-8S Source: SET CD
 [Concert] XR-8S Volume: SET 57
 ```
 
@@ -127,7 +127,7 @@ External change (remote / front panel):
 
 ```text
 [Concert] XR-8S Power: STANDBY (external)
-[Concert] XR-8S CD: OFF (source BD, external)
+[Concert] XR-8S Source: OFF (source BD, external)
 ```
 
 ## Supported Devices
