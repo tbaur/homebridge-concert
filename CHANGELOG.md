@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.11](https://github.com/tbaur/homebridge-concert/compare/v0.1.10...v0.1.11) (2026-08-04)
+
+
+### Bug Fixes
+
+* log source presets with front-panel labels ([#23](https://github.com/tbaur/homebridge-concert/issues/23)) ([06ff1cb](https://github.com/tbaur/homebridge-concert/commit/06ff1cb4d573b1a6ad19fad36fbae15c6fb2a435))
+
 ## [0.1.10](https://github.com/tbaur/homebridge-concert/compare/v0.1.9...v0.1.10) (2026-08-04)
 
 
