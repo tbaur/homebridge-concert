@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.1.10](https://github.com/tbaur/homebridge-concert/compare/v0.1.9...v0.1.10) (2026-08-04)
+
+
+### Features
+
+* add source/input preset HomeKit switches ([#21](https://github.com/tbaur/homebridge-concert/issues/21)) ([23713db](https://github.com/tbaur/homebridge-concert/commit/23713db117fd64fd9cfc7bd0ef8481714296264f))
+
 ## [0.1.9](https://github.com/tbaur/homebridge-concert/compare/v0.1.8...v0.1.9) (2026-08-03)
 
 
