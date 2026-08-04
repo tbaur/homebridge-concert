@@ -152,8 +152,9 @@ class SourcePresetAccessory {
             }
             const atTarget = current === this.targetSource;
             if (atTarget !== this.isAtTarget) {
+                const currentLabel = (0, protocol_1.resolveSourceDefinition)(current)?.label ?? current;
                 this.platform.log.info(`${this.accessory.displayName}: ${atTarget ? 'ON' : 'OFF'} `
-                    + `(source ${current}, external)`);
+                    + `(source ${currentLabel}, external)`);
             }
             this.isAtTarget = atTarget;
             this.switchService.updateCharacteristic(this.platform.Characteristic.On, atTarget);

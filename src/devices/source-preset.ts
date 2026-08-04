@@ -178,9 +178,10 @@ export class SourcePresetAccessory implements RefreshableAccessory {
       }
       const atTarget = current === this.targetSource
       if (atTarget !== this.isAtTarget) {
+        const currentLabel = resolveSourceDefinition(current)?.label ?? current
         this.platform.log.info(
           `${this.accessory.displayName}: ${atTarget ? 'ON' : 'OFF'} `
-          + `(source ${current}, external)`,
+          + `(source ${currentLabel}, external)`,
         )
       }
       this.isAtTarget = atTarget

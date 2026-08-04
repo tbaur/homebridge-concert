@@ -127,7 +127,7 @@ External change (remote / front panel):
 
 ```text
 [Concert] XR-8S Power: STANDBY (external)
-[Concert] XR-8S CD: OFF (source bd, external)
+[Concert] XR-8S CD: OFF (source BD, external)
 ```
 
 ## Supported Devices
