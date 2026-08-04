@@ -5,5 +5,6 @@
  * See LICENSE file for full license text
  */
 export { PowerAccessory } from './power';
+export { SourcePresetAccessory } from './source-preset';
 export { VolumePresetAccessory } from './volume-preset';
 //# sourceMappingURL=index.d.ts.map

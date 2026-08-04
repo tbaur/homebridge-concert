@@ -94,6 +94,14 @@ export const VOLUME_READY_TIMEOUT_MS = 60_000
  */
 export const VOLUME_READY_NOT_READY_LOG_AFTER_MS = 30_000
 
+/**
+ * Source-select wake retries share the volume timing window — cold boot often
+ * reports power On before input changes are accepted (`0x85` / timeouts).
+ */
+export const SOURCE_READY_RETRY_INTERVAL_MS = VOLUME_READY_RETRY_INTERVAL_MS
+export const SOURCE_READY_TIMEOUT_MS = VOLUME_READY_TIMEOUT_MS
+export const SOURCE_READY_NOT_READY_LOG_AFTER_MS = VOLUME_READY_NOT_READY_LOG_AFTER_MS
+
 /** Maximum time allowed for establishing a TCP connection. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 5_000
 

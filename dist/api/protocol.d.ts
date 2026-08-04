@@ -18,9 +18,13 @@
  *
  * Volume uses command 0x0D with data 0x00–0x63 (0–99) to set, or 0xF0 to query.
  *
+ * Source *query* uses command 0x1D with data 0xF0. Source *set* uses Simulate
+ * RC5 IR (0x08) with discrete source keys — see {@link ./sources}.
+ *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
 import { MAX_VOLUME, MIN_VOLUME } from '../settings';
+import { type SourceDefinition, type SourceId } from './sources';
 /** Start-of-frame byte (`!`). */
 export declare const FRAME_START = 33;
 /** End-of-frame byte (carriage return). */
@@ -29,7 +33,9 @@ export declare const FRAME_END = 13;
 export declare const COMMAND_POWER = 0;
 /** Absolute volume set / query command code. */
 export declare const COMMAND_VOLUME = 13;
-/** Simulate RC5 IR command (used for discrete power on/off). */
+/** Current source / input query command code. */
+export declare const COMMAND_SOURCE = 29;
+/** Simulate RC5 IR command (used for discrete power on/off and source select). */
 export declare const COMMAND_RC5 = 8;
 /** Enter standby (status / legacy set data byte). */
 export declare const POWER_STANDBY = 0;
@@ -39,8 +45,14 @@ export declare const POWER_ON = 1;
 export declare const POWER_QUERY = 240;
 /** Request current volume (query sentinel). */
 export declare const VOLUME_QUERY = 240;
+/** Request current source / input (query sentinel). */
+export declare const SOURCE_QUERY = 240;
+/** Zone 2 source status: follow Zone 1 (not a discrete input). */
+export declare const SOURCE_FOLLOW_ZONE1 = 0;
 /** Re-export volume bounds for protocol callers (single source: settings). */
 export { MIN_VOLUME, MAX_VOLUME };
+export type { SourceDefinition, SourceId };
+export { SOURCE_DEFINITIONS, SOURCE_IDS, SOURCE_LABELS, rc5CommandForSource, resolveSourceDefinition, sourceFromQueryCode, sourceSupportsZone, } from './sources';
 /** RC5 system code for Zone 1 advanced / discrete functions. */
 export declare const RC5_SYSTEM_ZONE1 = 16;
 /** RC5 system code for Zone 2. */
@@ -101,6 +113,15 @@ export declare function buildVolumeQuery(zone: number): Buffer;
  * @param level - Volume 0–99 (`0x00`–`0x63`)
  */
 export declare function buildVolumeSet(zone: number, level: number): Buffer;
+/** Build a current-source query for the given zone. */
+export declare function buildSourceQuery(zone: number): Buffer;
+/**
+ * Build a discrete source-select request (RC5 source key).
+ *
+ * @param zone - Automation zone (1 or 2)
+ * @param source - Source definition or config id / label
+ */
+export declare function buildSourceSet(zone: number, source: SourceDefinition | string): Buffer;
 /**
  * Extract the first complete response frame from a buffer, if present.
  *
@@ -126,6 +147,17 @@ export declare function isPowerOn(data: Buffer): boolean;
  * @throws {ProtocolError} when the payload is empty or out of range
  */
 export declare function parseVolume(data: Buffer): number;
+/**
+ * Interpret a source-command (0x1D) response data byte as a known input.
+ *
+ * Zone 2 “Follow Zone 1” ({@link SOURCE_FOLLOW_ZONE1}) is not a discrete
+ * input — callers that need the effective source should resolve Zone 1.
+ *
+ * @throws {ProtocolError} when the payload is empty, Follow Zone 1, or unknown
+ */
+export declare function parseSource(data: Buffer): SourceDefinition;
+/** True when 0x1D data is Zone 2 “Follow Zone 1”. */
+export declare function isSourceFollowZone1(data: Buffer): boolean;
 /** Hex dump of a frame for debug logging (no newlines). */
 export declare function formatFrame(frame: Buffer): string;
 //# sourceMappingURL=protocol.d.ts.map

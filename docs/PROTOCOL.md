@@ -52,8 +52,9 @@ Many status commands use data `0xF0` as a **query sentinel**.
 |---------------------|---------------|------------------------------|
 | Power query (`0x00`) + RC5 Power On/Off | Implemented | `power` |
 | Volume query/set (`0x0D`) | Implemented | `volumePreset` (On = at configured level) |
+| Source query (`0x1D`) + RC5 source keys | Implemented | `sourcePreset` (On = on configured input) |
 | Mute (`0x0E` / RC5 mute) | Not implemented | — |
-| Source / video select (`0x0A`, RC5 source keys) | Not implemented | — |
+| Video select only (`0x0A`) | Not implemented | — (use source preset / RC5) |
 | Tone / trim / balance | Not implemented | — |
 | Tuner / network extras | Not implemented | — |
 
@@ -72,16 +73,17 @@ Status: **Impl** = implemented in this plugin; **No** = not implemented (catalog
 | `0x04` | Software version | Subsystem `0xF0`–`0xF5` | No | Family |
 | `0x05` | Factory defaults | `0xAA 0xAA` | No | Family |
 | `0x06` | Save/restore secure settings | Op + PIN | No | Family |
-| `0x08` | Simulate RC5 IR | `system`, `command` (2 data bytes) | Impl (power on/off) | Verified |
+| `0x08` | Simulate RC5 IR | `system`, `command` (2 data bytes) | Impl (power on/off + source select) | Verified (power); Family (source) |
 | `0x09` | Display information type | Mode / query `0xF0` | No | Family |
 
-### Input / routing (`0x0A`–`0x0C`)
+### Input / routing (`0x0A`–`0x0C`, `0x1D`)
 
 | Cc | Name | Data / notes | Status | Provenance |
 |----|------|--------------|--------|------------|
 | `0x0A` | Video selection | `0x00` BD … `0x06` STB; `0xF0` query | No | Family |
 | `0x0B` | Analogue / digital / HDMI audio | `0x00`/`0x01`/`0x02`; `0xF0` query | No | Family |
 | `0x0C` | IMAX Enhanced | Auto/On/Off / query | No | Family |
+| `0x1D` | Current source | Query `0xF0`; status `0x01` CD, `0x02` BD, `0x03` AV, `0x04` SAT, `0x05` PVR, `0x06` UHD, `0x08` AUX, `0x09` DISPLAY, `0x0B` FM, `0x0C` DAB, `0x0E` NET, `0x10` STB, `0x11` GAME, `0x12` BT; `0x00` = Follow Z1 (client resolves via Zone 1 query) | Impl (query) | Family |
 
 ### Output / volume (`0x0D`–`0x14`)
 
@@ -137,9 +139,10 @@ Request data: `[system, command]`.
 | Mute Off (discrete) | `0x78` | No |
 | **Power On (discrete)** | **`0x7B`** | **Impl** |
 | **Power Off (discrete)** | **`0x7C`** | **Impl** |
-| Source keys (BD, SAT, NET, …) | various | No |
+| **Source: CD** | **`0x76`** (Z1) / **`0x06`** (Z2) | **Impl** |
+| Source keys (BD, SAT, NET, …) | see `src/api/sources.ts` | Impl |
 
-Full source-select and zone-2 tables live in the official AudioControl / family protocol docs.
+Catalogued HomeKit inputs and RC5 bytes: `src/api/sources.ts`. Full vendor tables remain in the official AudioControl / family protocol docs.
 
 ## Example frames
 
@@ -165,6 +168,18 @@ Volume query (zone 1):
 
 ```text
 21 01 0D 01 F0 0D
+```
+
+Source query (zone 1):
+
+```text
+21 01 1D 01 F0 0D
+```
+
+RC5 Source CD (zone 1):
+
+```text
+21 01 08 02 10 76 0D
 ```
 
 ## Extending the plugin

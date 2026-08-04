@@ -22,6 +22,8 @@ const settings_1 = require("../settings");
 const protocol_1 = require("./protocol");
 /** Responses accepted after a power set: RC5 ack, or a following Power status. */
 const POWER_SET_RESPONSE_COMMANDS = [protocol_1.COMMAND_RC5, protocol_1.COMMAND_POWER];
+/** Responses accepted after a source set: RC5 ack, or a following Source status. */
+const SOURCE_SET_RESPONSE_COMMANDS = [protocol_1.COMMAND_RC5, protocol_1.COMMAND_SOURCE];
 /**
  * Sends framed automation commands to an AudioControl Concert receiver over TCP.
  */
@@ -35,6 +37,8 @@ class ConcertClient {
     createConnection;
     /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
     volumeQueryInFlight = new Map();
+    /** Coalesce concurrent source queries for the same zone (poll fan-out). */
+    sourceQueryInFlight = new Map();
     /** Last successfully observed power state per zone. */
     lastPowerOnByZone = new Map();
     /**
@@ -248,7 +252,7 @@ class ConcertClient {
             catch (error) {
                 const now = Date.now();
                 const remaining = deadline - now;
-                if (!isRetryableVolumeError(error) || remaining <= 0) {
+                if (!isRetryableNotReadyError(error) || remaining <= 0) {
                     throw error;
                 }
                 const message = error instanceof Error ? error.message : String(error);
@@ -262,6 +266,116 @@ class ConcertClient {
                     this.log.debug?.(`Volume set attempt ${attempt} failed; retrying`);
                 }
                 await sleep(Math.min(settings_1.VOLUME_READY_RETRY_INTERVAL_MS, remaining));
+            }
+        }
+    }
+    /**
+     * Query the current input source id for the zone.
+     *
+     * Concurrent callers for the same zone share one in-flight query.
+     * Retries once on ConnectionError (same as power / volume query).
+     */
+    async getSource(zone) {
+        const resolvedZone = this.resolveZone(zone);
+        const existing = this.sourceQueryInFlight.get(resolvedZone);
+        if (existing) {
+            return existing;
+        }
+        const pending = this.withExclusive(() => this.getSourceUnlocked(resolvedZone))
+            .finally(() => {
+            this.sourceQueryInFlight.delete(resolvedZone);
+        });
+        this.sourceQueryInFlight.set(resolvedZone, pending);
+        return pending;
+    }
+    async getSourceUnlocked(zone) {
+        return this.withQueryRetry('Source query', async () => {
+            const response = await this.send((0, protocol_1.buildSourceQuery)(zone), protocol_1.COMMAND_SOURCE, zone);
+            this.assertOk(response, 'source query');
+            // Zone 2 may report Follow Zone 1 (0x00) — resolve the effective input.
+            if ((0, protocol_1.isSourceFollowZone1)(response.data)) {
+                if (zone === 1) {
+                    throw new errors_1.ProtocolError('Source is Follow Zone 1 (unexpected for zone 1)');
+                }
+                const z1 = await this.send((0, protocol_1.buildSourceQuery)(1), protocol_1.COMMAND_SOURCE, 1);
+                this.assertOk(z1, 'source query (zone 1 follow)');
+                if ((0, protocol_1.isSourceFollowZone1)(z1.data)) {
+                    throw new errors_1.ProtocolError('Zone 1 source is Follow Zone 1 (invalid)');
+                }
+                return (0, protocol_1.parseSource)(z1.data).id;
+            }
+            return (0, protocol_1.parseSource)(response.data).id;
+        });
+    }
+    /**
+     * Select an input source for the zone (discrete RC5 source key).
+     *
+     * When the set ack is missing (ConnectionError), settle and confirm via
+     * source query before failing — matching power/volume set resilience.
+     *
+     * @param source - Source id (`cd`), label (`CD`), or definition
+     */
+    async setSource(source, zone) {
+        const resolved = coerceSourceDefinition(source);
+        const resolvedZone = this.resolveZone(zone);
+        return this.withExclusive(async () => {
+            try {
+                const response = await this.send((0, protocol_1.buildSourceSet)(resolvedZone, resolved), SOURCE_SET_RESPONSE_COMMANDS, resolvedZone);
+                this.assertOk(response, 'source set');
+                this.rememberPowerState(resolvedZone, true);
+            }
+            catch (error) {
+                if (!(error instanceof errors_1.ConnectionError)) {
+                    throw error;
+                }
+                this.log.debug?.(`Source set ack missing (${error.message}); verifying ${resolved.label}`);
+                if (await this.verifySource(resolved.id, resolvedZone)) {
+                    this.rememberPowerState(resolvedZone, true);
+                    return;
+                }
+                throw error;
+            }
+        });
+    }
+    /**
+     * Select a source, retrying politely while the receiver finishes waking.
+     *
+     * Same wake window as {@link setVolumeWhenReady} so Shortcuts can Set Input
+     * after power-on without a fixed Wait.
+     */
+    async setSourceWhenReady(source, zone, options) {
+        const resolved = coerceSourceDefinition(source);
+        const resolvedZone = this.resolveZone(zone);
+        const startedAt = Date.now();
+        const deadline = startedAt + settings_1.SOURCE_READY_TIMEOUT_MS;
+        let attempt = 0;
+        let notifiedWaiting = false;
+        for (;;) {
+            attempt += 1;
+            try {
+                await this.setSource(resolved, resolvedZone);
+                if (attempt > 1) {
+                    this.log.debug?.(`Source ${resolved.label} set after ${attempt} attempts (receiver ready)`);
+                }
+                return;
+            }
+            catch (error) {
+                const now = Date.now();
+                const remaining = deadline - now;
+                if (!isRetryableNotReadyError(error) || remaining <= 0) {
+                    throw error;
+                }
+                const message = error instanceof Error ? error.message : String(error);
+                if (!notifiedWaiting && now - startedAt >= settings_1.SOURCE_READY_NOT_READY_LOG_AFTER_MS) {
+                    notifiedWaiting = true;
+                    options?.onWaiting?.();
+                    this.log.debug?.(`Source not ready yet (${message}); retrying for up to `
+                        + `${Math.round(settings_1.SOURCE_READY_TIMEOUT_MS / 1000)}s`);
+                }
+                else {
+                    this.log.debug?.(`Source set attempt ${attempt} failed; retrying`);
+                }
+                await sleep(Math.min(settings_1.SOURCE_READY_RETRY_INTERVAL_MS, remaining));
             }
         }
     }
@@ -297,6 +411,24 @@ class ConcertClient {
             catch (verifyError) {
                 const message = verifyError instanceof Error ? verifyError.message : String(verifyError);
                 this.log.debug?.(`Volume verify attempt ${attempt + 1} failed: ${message}`);
+            }
+        }
+        return false;
+    }
+    /** True when a source query reports the desired input. */
+    async verifySource(expected, zone) {
+        for (let attempt = 0; attempt < settings_1.POWER_VERIFY_ATTEMPTS; attempt++) {
+            await sleep(settings_1.POWER_SETTLE_MS);
+            try {
+                const actual = await this.getSourceUnlocked(zone);
+                if (actual === expected) {
+                    this.log.debug?.(`Source verified as ${expected} after missing ack`);
+                    return true;
+                }
+            }
+            catch (verifyError) {
+                const message = verifyError instanceof Error ? verifyError.message : String(verifyError);
+                this.log.debug?.(`Source verify attempt ${attempt + 1} failed: ${message}`);
             }
         }
         return false;
@@ -411,12 +543,22 @@ class ConcertClient {
     }
 }
 exports.ConcertClient = ConcertClient;
-/** True when a volume set failure is likely due to wake / not-ready state. */
-function isRetryableVolumeError(error) {
+/** True when a set failure is likely due to wake / not-ready state. */
+function isRetryableNotReadyError(error) {
     if (error instanceof errors_1.ConnectionError) {
         return true;
     }
     return error instanceof errors_1.ProtocolError && error.answerCode === protocol_1.ANSWER_INVALID_STATE;
+}
+function coerceSourceDefinition(source) {
+    if (typeof source === 'object' && source !== null && 'id' in source && 'queryCode' in source) {
+        return source;
+    }
+    const resolved = (0, protocol_1.resolveSourceDefinition)(String(source));
+    if (!resolved) {
+        throw new RangeError(`Unknown source "${String(source)}"`);
+    }
+    return resolved;
 }
 function sleep(ms) {
     return new Promise((resolve) => {

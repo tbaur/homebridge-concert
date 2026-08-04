@@ -9,6 +9,7 @@ import {
   ANSWER_OK,
   COMMAND_POWER,
   COMMAND_RC5,
+  COMMAND_SOURCE,
   COMMAND_VOLUME,
   FRAME_END,
   FRAME_START,
@@ -19,16 +20,22 @@ import {
   RC5_POWER_ON,
   RC5_SYSTEM_ZONE1,
   RC5_SYSTEM_ZONE2,
+  SOURCE_FOLLOW_ZONE1,
+  SOURCE_QUERY,
   VOLUME_QUERY,
   buildPowerOn,
   buildPowerQuery,
   buildPowerStandby,
   buildRequest,
+  buildSourceQuery,
+  buildSourceSet,
   buildVolumeQuery,
   buildVolumeSet,
   describeAnswerCode,
   formatFrame,
   isPowerOn,
+  isSourceFollowZone1,
+  parseSource,
   parseVolume,
   tryParseResponse,
 } from '../../src/api/protocol'
@@ -128,6 +135,35 @@ describe('volume helpers', () => {
     expect(parseVolume(Buffer.from([57]))).toBe(57)
     expect(() => parseVolume(Buffer.alloc(0))).toThrow(/empty/)
     expect(() => parseVolume(Buffer.from([0x64]))).toThrow(/Unexpected volume/)
+  })
+})
+
+describe('source helpers', () => {
+  it('builds source query and RC5 CD select frames', () => {
+    expect([...buildSourceQuery(1)]).toEqual([
+      0x21, 0x01, COMMAND_SOURCE, 0x01, SOURCE_QUERY, 0x0d,
+    ])
+    expect([...buildSourceSet(1, 'CD')]).toEqual([
+      0x21, 0x01, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE1, 0x76, 0x0d,
+    ])
+    expect([...buildSourceSet(2, 'cd')]).toEqual([
+      0x21, 0x02, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE2, 0x06, 0x0d,
+    ])
+  })
+
+  it('rejects unknown sources and Zone 2 DISPLAY', () => {
+    expect(() => buildSourceSet(1, 'tape')).toThrow(RangeError)
+    expect(() => buildSourceSet(2, 'DISPLAY')).toThrow(/Zone 2/)
+  })
+
+  it('parses source response data', () => {
+    expect(parseSource(Buffer.from([0x01])).id).toBe('cd')
+    expect(parseSource(Buffer.from([0x02])).label).toBe('BD')
+    expect(() => parseSource(Buffer.alloc(0))).toThrow(/empty/)
+    expect(() => parseSource(Buffer.from([SOURCE_FOLLOW_ZONE1]))).toThrow(/Follow Zone 1/)
+    expect(() => parseSource(Buffer.from([0x99]))).toThrow(/Unexpected source/)
+    expect(isSourceFollowZone1(Buffer.from([SOURCE_FOLLOW_ZONE1]))).toBe(true)
+    expect(isSourceFollowZone1(Buffer.from([0x01]))).toBe(false)
   })
 })
 

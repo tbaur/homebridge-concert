@@ -9,6 +9,8 @@
 
 import type { PlatformConfig } from 'homebridge'
 
+import type { SourceId } from '../api/sources'
+
 /**
  * Minimal logger surface shared by the TCP client. Any subset of methods may
  * be provided; the Homebridge `Logging` object satisfies it.
@@ -21,7 +23,7 @@ export interface PluginLogger {
 }
 
 /** Supported HomeKit accessory kinds exposed by this platform. */
-export type AccessoryKind = 'power' | 'volumePreset'
+export type AccessoryKind = 'power' | 'volumePreset' | 'sourcePreset'
 
 /** One entry in the platform `accessories` array. */
 export interface ConcertAccessoryConfig {
@@ -33,9 +35,14 @@ export interface ConcertAccessoryConfig {
   zone?: number
   /**
    * Target volume level (0–99) for `volumePreset` accessories.
-   * Required when `type` is `volumePreset`; ignored for `power`.
+   * Required when `type` is `volumePreset`; ignored otherwise.
    */
   volume?: number
+  /**
+   * Target input for `sourcePreset` accessories (`cd`, `CD`, `bd`, …).
+   * Required when `type` is `sourcePreset`; ignored otherwise.
+   */
+  source?: string
 }
 
 /**
@@ -64,6 +71,8 @@ export interface ResolvedAccessory {
   zone: number
   /** Present when `kind` is `volumePreset`. */
   volume?: number
+  /** Present when `kind` is `sourcePreset`. */
+  source?: SourceId
 }
 
 /** Persisted accessory context for a configured receiver switch. */
@@ -80,6 +89,8 @@ export interface AccessoryContext {
   serialNumber: string
   /** Present when `kind` is `volumePreset`. */
   volume?: number
+  /** Present when `kind` is `sourcePreset`. */
+  source?: SourceId
 }
 
 /** Common surface for platform-polled accessory handlers. */

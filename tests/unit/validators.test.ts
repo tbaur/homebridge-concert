@@ -52,6 +52,25 @@ describe('validateConfig', () => {
     expect(result.errors.some((e) => e.includes('volume'))).toBe(true)
   })
 
+  it('requires source for sourcePreset', () => {
+    const result = validateConfig(baseConfig({
+      accessories: [{ type: 'sourcePreset', name: 'XR-8S CD' }],
+    }))
+    expect(result.errors.some((e) => e.includes('source'))).toBe(true)
+  })
+
+  it('rejects unknown source ids and Zone 2 DISPLAY', () => {
+    const unknown = validateConfig(baseConfig({
+      accessories: [{ type: 'sourcePreset', name: 'XR-8S Tape', source: 'TAPE' }],
+    }))
+    expect(unknown.errors.some((e) => e.includes('not a known input'))).toBe(true)
+
+    const z2Display = validateConfig(baseConfig({
+      accessories: [{ type: 'sourcePreset', name: 'Z2 Display', zone: 2, source: 'DISPLAY' }],
+    }))
+    expect(z2Display.errors.some((e) => e.includes('not available for zone 2'))).toBe(true)
+  })
+
   it('rejects duplicate accessory identities', () => {
     const result = validateConfig(baseConfig({
       accessories: [
@@ -126,19 +145,22 @@ describe('validateConfig', () => {
 })
 
 describe('resolveAccessories', () => {
-  it('resolves power and volume presets', () => {
+  it('resolves power, volume, and source presets', () => {
     const resolved = resolveAccessories(baseConfig({
       accessories: [
         { type: 'power', name: 'XR-8S Power' },
         { type: 'volumePreset', name: 'XR-8S Volume', volume: 57 },
+        { type: 'sourcePreset', name: 'XR-8S CD', source: 'CD' },
       ],
     }))
     expect(resolved).toEqual([
       { kind: 'power', name: 'XR-8S Power', zone: 1 },
       { kind: 'volumePreset', name: 'XR-8S Volume', zone: 1, volume: 57 },
+      { kind: 'sourcePreset', name: 'XR-8S CD', zone: 1, source: 'cd' },
     ])
     expect(accessoryIdentityKey(resolved[0])).toBe('z1:power')
     expect(accessoryIdentityKey(resolved[1])).toBe('z1:vol:57')
+    expect(accessoryIdentityKey(resolved[2])).toBe('z1:src:cd')
   })
 })
 

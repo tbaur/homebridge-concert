@@ -16,6 +16,7 @@ exports.resolveAccessories = resolveAccessories;
 exports.resolvePort = resolvePort;
 exports.resolveZone = resolveZone;
 exports.resolveRefreshRateSec = resolveRefreshRateSec;
+const protocol_1 = require("../api/protocol");
 const settings_1 = require("../settings");
 function isNonEmptyString(value) {
     return typeof value === 'string' && value.trim().length > 0;
@@ -44,12 +45,15 @@ function isValidHost(value) {
     return true;
 }
 function isAccessoryKind(value) {
-    return value === 'power' || value === 'volumePreset';
+    return value === 'power' || value === 'volumePreset' || value === 'sourcePreset';
 }
 /** Stable identity key used for duplicate detection and UUID generation. */
 function accessoryIdentityKey(accessory) {
     if (accessory.kind === 'volumePreset') {
         return `z${accessory.zone}:vol:${accessory.volume}`;
+    }
+    if (accessory.kind === 'sourcePreset') {
+        return `z${accessory.zone}:src:${accessory.source}`;
     }
     return `z${accessory.zone}:power`;
 }
@@ -139,7 +143,7 @@ function tryResolveAccessory(entry, label, errors) {
         return undefined;
     }
     if (!isAccessoryKind(entry.type)) {
-        errors.push(`${label}.type must be "power" or "volumePreset".`);
+        errors.push(`${label}.type must be "power", "volumePreset", or "sourcePreset".`);
         return undefined;
     }
     if (!isNonEmptyString(entry.name)) {
@@ -159,6 +163,29 @@ function tryResolveAccessory(entry, label, errors) {
             kind: 'power',
             name: entry.name.trim(),
             zone,
+        };
+    }
+    if (entry.type === 'sourcePreset') {
+        if (!isNonEmptyString(entry.source)) {
+            errors.push(`${label}.source is required for sourcePreset `
+                + `(one of: ${protocol_1.SOURCE_LABELS.join(', ')}).`);
+            return undefined;
+        }
+        const definition = (0, protocol_1.resolveSourceDefinition)(entry.source);
+        if (!definition) {
+            errors.push(`${label}.source "${entry.source}" is not a known input `
+                + `(one of: ${protocol_1.SOURCE_LABELS.join(', ')}).`);
+            return undefined;
+        }
+        if (!(0, protocol_1.sourceSupportsZone)(definition, zone)) {
+            errors.push(`${label}.source "${definition.label}" is not available for zone ${zone}.`);
+            return undefined;
+        }
+        return {
+            kind: 'sourcePreset',
+            name: entry.name.trim(),
+            zone,
+            source: definition.id,
         };
     }
     if (typeof entry.volume !== 'number'

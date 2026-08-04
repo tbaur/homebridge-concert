@@ -18,11 +18,21 @@
  *
  * Volume uses command 0x0D with data 0x00–0x63 (0–99) to set, or 0xF0 to query.
  *
+ * Source *query* uses command 0x1D with data 0xF0. Source *set* uses Simulate
+ * RC5 IR (0x08) with discrete source keys — see {@link ./sources}.
+ *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
 
 import { ProtocolError } from '../errors'
 import { MAX_VOLUME, MIN_VOLUME } from '../settings'
+import {
+  rc5CommandForSource,
+  resolveSourceDefinition,
+  sourceFromQueryCode,
+  type SourceDefinition,
+  type SourceId,
+} from './sources'
 
 /** Start-of-frame byte (`!`). */
 export const FRAME_START = 0x21
@@ -36,7 +46,10 @@ export const COMMAND_POWER = 0x00
 /** Absolute volume set / query command code. */
 export const COMMAND_VOLUME = 0x0D
 
-/** Simulate RC5 IR command (used for discrete power on/off). */
+/** Current source / input query command code. */
+export const COMMAND_SOURCE = 0x1D
+
+/** Simulate RC5 IR command (used for discrete power on/off and source select). */
 export const COMMAND_RC5 = 0x08
 
 /** Enter standby (status / legacy set data byte). */
@@ -51,8 +64,25 @@ export const POWER_QUERY = 0xF0
 /** Request current volume (query sentinel). */
 export const VOLUME_QUERY = 0xF0
 
+/** Request current source / input (query sentinel). */
+export const SOURCE_QUERY = 0xF0
+
+/** Zone 2 source status: follow Zone 1 (not a discrete input). */
+export const SOURCE_FOLLOW_ZONE1 = 0x00
+
 /** Re-export volume bounds for protocol callers (single source: settings). */
 export { MIN_VOLUME, MAX_VOLUME }
+
+export type { SourceDefinition, SourceId }
+export {
+  SOURCE_DEFINITIONS,
+  SOURCE_IDS,
+  SOURCE_LABELS,
+  rc5CommandForSource,
+  resolveSourceDefinition,
+  sourceFromQueryCode,
+  sourceSupportsZone,
+} from './sources'
 
 /** RC5 system code for Zone 1 advanced / discrete functions. */
 export const RC5_SYSTEM_ZONE1 = 0x10
@@ -182,6 +212,27 @@ export function buildVolumeSet(zone: number, level: number): Buffer {
   return buildRequest(zone, COMMAND_VOLUME, Buffer.from([level]))
 }
 
+/** Build a current-source query for the given zone. */
+export function buildSourceQuery(zone: number): Buffer {
+  return buildRequest(zone, COMMAND_SOURCE, Buffer.from([SOURCE_QUERY]))
+}
+
+/**
+ * Build a discrete source-select request (RC5 source key).
+ *
+ * @param zone - Automation zone (1 or 2)
+ * @param source - Source definition or config id / label
+ */
+export function buildSourceSet(zone: number, source: SourceDefinition | string): Buffer {
+  const definition = typeof source === 'string'
+    ? resolveSourceDefinition(source)
+    : source
+  if (!definition) {
+    throw new RangeError(`Unknown source "${String(source)}"`)
+  }
+  return buildRc5(zone, rc5SystemForZone(zone), rc5CommandForSource(definition, zone))
+}
+
 /**
  * Extract the first complete response frame from a buffer, if present.
  *
@@ -273,6 +324,34 @@ export function parseVolume(data: Buffer): number {
     throw new ProtocolError(`Unexpected volume byte 0x${level.toString(16)}`)
   }
   return level
+}
+
+/**
+ * Interpret a source-command (0x1D) response data byte as a known input.
+ *
+ * Zone 2 “Follow Zone 1” ({@link SOURCE_FOLLOW_ZONE1}) is not a discrete
+ * input — callers that need the effective source should resolve Zone 1.
+ *
+ * @throws {ProtocolError} when the payload is empty, Follow Zone 1, or unknown
+ */
+export function parseSource(data: Buffer): SourceDefinition {
+  if (data.length < 1) {
+    throw new ProtocolError('Source response data is empty')
+  }
+  const code = data[0]
+  if (code === SOURCE_FOLLOW_ZONE1) {
+    throw new ProtocolError('Source is Follow Zone 1 (not a discrete input)')
+  }
+  const source = sourceFromQueryCode(code)
+  if (!source) {
+    throw new ProtocolError(`Unexpected source byte 0x${code.toString(16)}`)
+  }
+  return source
+}
+
+/** True when 0x1D data is Zone 2 “Follow Zone 1”. */
+export function isSourceFollowZone1(data: Buffer): boolean {
+  return data.length >= 1 && data[0] === SOURCE_FOLLOW_ZONE1
 }
 
 /** Hex dump of a frame for debug logging (no newlines). */
