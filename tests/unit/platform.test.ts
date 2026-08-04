@@ -103,6 +103,9 @@ describe('ConcertPlatform', () => {
     jest.spyOn(ConcertClient.prototype, 'getVolume').mockResolvedValue(40)
     jest.spyOn(ConcertClient.prototype, 'setVolume').mockResolvedValue(undefined)
     jest.spyOn(ConcertClient.prototype, 'setVolumeWhenReady').mockResolvedValue(undefined)
+    jest.spyOn(ConcertClient.prototype, 'getSource').mockResolvedValue('cd')
+    jest.spyOn(ConcertClient.prototype, 'setSource').mockResolvedValue(undefined)
+    jest.spyOn(ConcertClient.prototype, 'setSourceWhenReady').mockResolvedValue(undefined)
     jest.spyOn(ConcertClient.prototype, 'getLastPowerState').mockReturnValue(undefined)
   })
 
@@ -151,13 +154,14 @@ describe('ConcertPlatform', () => {
     expect(api.registerPlatformAccessories).not.toHaveBeenCalled()
   })
 
-  it('registers power and volume accessories on launch', async () => {
+  it('registers power, volume, and source accessories on launch', async () => {
     const api = createMockApi()
     const log = createLog()
     const config = validConfig({
       accessories: [
         { type: 'power', name: 'XR-8S Power', zone: 1 },
         { type: 'volumePreset', name: 'XR-8S Volume', zone: 1, volume: 57 },
+        { type: 'sourcePreset', name: 'XR-8S CD', zone: 1, source: 'CD' },
       ],
     })
     jest.spyOn(ConcertClient.prototype, 'getPowerState').mockResolvedValue(true)
@@ -167,7 +171,7 @@ describe('ConcertPlatform', () => {
     api.emit('didFinishLaunching')
     await settleRefresh()
 
-    expect(api.registerPlatformAccessories).toHaveBeenCalledTimes(2)
+    expect(api.registerPlatformAccessories).toHaveBeenCalledTimes(3)
     expect(api.registerPlatformAccessories).toHaveBeenCalledWith(
       'homebridge-concert',
       'Concert',
@@ -182,6 +186,13 @@ describe('ConcertPlatform', () => {
         expect.objectContaining({ displayName: 'XR-8S Volume' }),
       ]),
     )
+    expect(api.registerPlatformAccessories).toHaveBeenCalledWith(
+      'homebridge-concert',
+      'Concert',
+      expect.arrayContaining([
+        expect.objectContaining({ displayName: 'XR-8S CD' }),
+      ]),
+    )
     const registered = (api.registerPlatformAccessories as jest.Mock).mock.calls[0][2][0] as {
       context: { serialNumber: string }
     }
@@ -190,6 +201,7 @@ describe('ConcertPlatform', () => {
     )
     expect(ConcertClient.prototype.getPowerState).toHaveBeenCalled()
     expect(ConcertClient.prototype.getVolume).toHaveBeenCalled()
+    expect(ConcertClient.prototype.getSource).toHaveBeenCalled()
     api.emit('shutdown')
   })
 

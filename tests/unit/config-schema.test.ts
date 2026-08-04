@@ -29,7 +29,12 @@ describe('config.schema.json', () => {
     expect(accessories.type).toBe('array')
     expect(accessories.minItems).toBe(1)
     expect(accessories.items.required).toEqual(expect.arrayContaining(['type', 'name']))
-    expect(accessories.items.properties.type.enum).toEqual(['power', 'volumePreset'])
+    expect(accessories.items.properties.type.enum).toEqual([
+      'power',
+      'volumePreset',
+      'sourcePreset',
+    ])
+    expect(accessories.items.properties.source.enum).toEqual(expect.arrayContaining(['CD', 'BD']))
   })
 
   it('binds accessory form fields under accessories[] (not root name/type)', () => {
@@ -43,6 +48,7 @@ describe('config.schema.json', () => {
       'accessories[].name',
       'accessories[].zone',
       'accessories[].volume',
+      'accessories[].source',
     ]))
     expect(keys).not.toContain('type')
     expect(keys).not.toContain('name')

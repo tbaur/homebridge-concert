@@ -6,4 +6,5 @@
  */
 
 export { PowerAccessory } from './power'
+export { SourcePresetAccessory } from './source-preset'
 export { VolumePresetAccessory } from './volume-preset'

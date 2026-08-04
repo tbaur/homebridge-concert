@@ -24,6 +24,9 @@ import {
   POWER_QUERY_RETRY_MS,
   POWER_SETTLE_MS,
   POWER_VERIFY_ATTEMPTS,
+  SOURCE_READY_NOT_READY_LOG_AFTER_MS,
+  SOURCE_READY_RETRY_INTERVAL_MS,
+  SOURCE_READY_TIMEOUT_MS,
   VOLUME_READY_NOT_READY_LOG_AFTER_MS,
   VOLUME_READY_RETRY_INTERVAL_MS,
   VOLUME_READY_TIMEOUT_MS,
@@ -34,22 +37,33 @@ import {
   ANSWER_OK,
   COMMAND_POWER,
   COMMAND_RC5,
+  COMMAND_SOURCE,
   COMMAND_VOLUME,
   buildPowerOn,
   buildPowerQuery,
   buildPowerStandby,
+  buildSourceQuery,
+  buildSourceSet,
   buildVolumeQuery,
   buildVolumeSet,
   describeAnswerCode,
   formatFrame,
   isPowerOn,
+  isSourceFollowZone1,
+  parseSource,
   parseVolume,
+  resolveSourceDefinition,
   tryParseResponse,
   type ProtocolResponse,
+  type SourceDefinition,
+  type SourceId,
 } from './protocol'
 
 /** Responses accepted after a power set: RC5 ack, or a following Power status. */
 const POWER_SET_RESPONSE_COMMANDS: readonly number[] = [COMMAND_RC5, COMMAND_POWER]
+
+/** Responses accepted after a source set: RC5 ack, or a following Source status. */
+const SOURCE_SET_RESPONSE_COMMANDS: readonly number[] = [COMMAND_RC5, COMMAND_SOURCE]
 
 export interface ConcertClientOptions {
   host: string
@@ -72,6 +86,15 @@ export interface SetVolumeWhenReadyOptions {
   onWaiting?: () => void
 }
 
+/** Options for {@link ConcertClient.setSourceWhenReady}. */
+export interface SetSourceWhenReadyOptions {
+  /**
+   * Called once after {@link SOURCE_READY_NOT_READY_LOG_AFTER_MS} of retryable
+   * failures (not on the first attempt — normal XR wake stays quiet).
+   */
+  onWaiting?: () => void
+}
+
 /**
  * Sends framed automation commands to an AudioControl Concert receiver over TCP.
  */
@@ -85,6 +108,8 @@ export class ConcertClient {
   private readonly createConnection: typeof net.createConnection
   /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
   private readonly volumeQueryInFlight = new Map<number, Promise<number>>()
+  /** Coalesce concurrent source queries for the same zone (poll fan-out). */
+  private readonly sourceQueryInFlight = new Map<number, Promise<SourceId>>()
   /** Last successfully observed power state per zone. */
   private readonly lastPowerOnByZone = new Map<number, boolean>()
   /**
@@ -336,7 +361,7 @@ export class ConcertClient {
       } catch (error) {
         const now = Date.now()
         const remaining = deadline - now
-        if (!isRetryableVolumeError(error) || remaining <= 0) {
+        if (!isRetryableNotReadyError(error) || remaining <= 0) {
           throw error
         }
         const message = error instanceof Error ? error.message : String(error)
@@ -353,6 +378,139 @@ export class ConcertClient {
           )
         }
         await sleep(Math.min(VOLUME_READY_RETRY_INTERVAL_MS, remaining))
+      }
+    }
+  }
+
+  /**
+   * Query the current input source id for the zone.
+   *
+   * Concurrent callers for the same zone share one in-flight query.
+   * Retries once on ConnectionError (same as power / volume query).
+   */
+  async getSource(zone?: number): Promise<SourceId> {
+    const resolvedZone = this.resolveZone(zone)
+    const existing = this.sourceQueryInFlight.get(resolvedZone)
+    if (existing) {
+      return existing
+    }
+
+    const pending = this.withExclusive(() => this.getSourceUnlocked(resolvedZone))
+      .finally(() => {
+        this.sourceQueryInFlight.delete(resolvedZone)
+      })
+
+    this.sourceQueryInFlight.set(resolvedZone, pending)
+    return pending
+  }
+
+  private async getSourceUnlocked(zone: number): Promise<SourceId> {
+    return this.withQueryRetry('Source query', async () => {
+      const response = await this.send(buildSourceQuery(zone), COMMAND_SOURCE, zone)
+      this.assertOk(response, 'source query')
+      // Zone 2 may report Follow Zone 1 (0x00) — resolve the effective input.
+      if (isSourceFollowZone1(response.data)) {
+        if (zone === 1) {
+          throw new ProtocolError('Source is Follow Zone 1 (unexpected for zone 1)')
+        }
+        const z1 = await this.send(buildSourceQuery(1), COMMAND_SOURCE, 1)
+        this.assertOk(z1, 'source query (zone 1 follow)')
+        if (isSourceFollowZone1(z1.data)) {
+          throw new ProtocolError('Zone 1 source is Follow Zone 1 (invalid)')
+        }
+        return parseSource(z1.data).id
+      }
+      return parseSource(response.data).id
+    })
+  }
+
+  /**
+   * Select an input source for the zone (discrete RC5 source key).
+   *
+   * When the set ack is missing (ConnectionError), settle and confirm via
+   * source query before failing — matching power/volume set resilience.
+   *
+   * @param source - Source id (`cd`), label (`CD`), or definition
+   */
+  async setSource(
+    source: SourceId | string | SourceDefinition,
+    zone?: number,
+  ): Promise<void> {
+    const resolved = coerceSourceDefinition(source)
+    const resolvedZone = this.resolveZone(zone)
+    return this.withExclusive(async () => {
+      try {
+        const response = await this.send(
+          buildSourceSet(resolvedZone, resolved),
+          SOURCE_SET_RESPONSE_COMMANDS,
+          resolvedZone,
+        )
+        this.assertOk(response, 'source set')
+        this.rememberPowerState(resolvedZone, true)
+      } catch (error) {
+        if (!(error instanceof ConnectionError)) {
+          throw error
+        }
+        this.log.debug?.(
+          `Source set ack missing (${error.message}); verifying ${resolved.label}`,
+        )
+        if (await this.verifySource(resolved.id, resolvedZone)) {
+          this.rememberPowerState(resolvedZone, true)
+          return
+        }
+        throw error
+      }
+    })
+  }
+
+  /**
+   * Select a source, retrying politely while the receiver finishes waking.
+   *
+   * Same wake window as {@link setVolumeWhenReady} so Shortcuts can Set Input
+   * after power-on without a fixed Wait.
+   */
+  async setSourceWhenReady(
+    source: SourceId | string | SourceDefinition,
+    zone?: number,
+    options?: SetSourceWhenReadyOptions,
+  ): Promise<void> {
+    const resolved = coerceSourceDefinition(source)
+    const resolvedZone = this.resolveZone(zone)
+    const startedAt = Date.now()
+    const deadline = startedAt + SOURCE_READY_TIMEOUT_MS
+    let attempt = 0
+    let notifiedWaiting = false
+
+    for (;;) {
+      attempt += 1
+      try {
+        await this.setSource(resolved, resolvedZone)
+        if (attempt > 1) {
+          this.log.debug?.(
+            `Source ${resolved.label} set after ${attempt} attempts (receiver ready)`,
+          )
+        }
+        return
+      } catch (error) {
+        const now = Date.now()
+        const remaining = deadline - now
+        if (!isRetryableNotReadyError(error) || remaining <= 0) {
+          throw error
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        if (!notifiedWaiting && now - startedAt >= SOURCE_READY_NOT_READY_LOG_AFTER_MS) {
+          notifiedWaiting = true
+          options?.onWaiting?.()
+          this.log.debug?.(
+            `Source not ready yet (${message}); retrying for up to `
+            + `${Math.round(SOURCE_READY_TIMEOUT_MS / 1000)}s`,
+          )
+        } else {
+          this.log.debug?.(
+            `Source set attempt ${attempt} failed; retrying`,
+          )
+        }
+        await sleep(Math.min(SOURCE_READY_RETRY_INTERVAL_MS, remaining))
       }
     }
   }
@@ -392,6 +550,26 @@ export class ConcertClient {
       } catch (verifyError) {
         const message = verifyError instanceof Error ? verifyError.message : String(verifyError)
         this.log.debug?.(`Volume verify attempt ${attempt + 1} failed: ${message}`)
+      }
+    }
+    return false
+  }
+
+  /** True when a source query reports the desired input. */
+  private async verifySource(expected: SourceId, zone: number): Promise<boolean> {
+    for (let attempt = 0; attempt < POWER_VERIFY_ATTEMPTS; attempt++) {
+      await sleep(POWER_SETTLE_MS)
+      try {
+        const actual = await this.getSourceUnlocked(zone)
+        if (actual === expected) {
+          this.log.debug?.(
+            `Source verified as ${expected} after missing ack`,
+          )
+          return true
+        }
+      } catch (verifyError) {
+        const message = verifyError instanceof Error ? verifyError.message : String(verifyError)
+        this.log.debug?.(`Source verify attempt ${attempt + 1} failed: ${message}`)
       }
     }
     return false
@@ -534,12 +712,25 @@ export class ConcertClient {
   }
 }
 
-/** True when a volume set failure is likely due to wake / not-ready state. */
-function isRetryableVolumeError(error: unknown): boolean {
+/** True when a set failure is likely due to wake / not-ready state. */
+function isRetryableNotReadyError(error: unknown): boolean {
   if (error instanceof ConnectionError) {
     return true
   }
   return error instanceof ProtocolError && error.answerCode === ANSWER_INVALID_STATE
+}
+
+function coerceSourceDefinition(
+  source: SourceId | string | SourceDefinition,
+): SourceDefinition {
+  if (typeof source === 'object' && source !== null && 'id' in source && 'queryCode' in source) {
+    return source
+  }
+  const resolved = resolveSourceDefinition(String(source))
+  if (!resolved) {
+    throw new RangeError(`Unknown source "${String(source)}"`)
+  }
+  return resolved
 }
 
 function sleep(ms: number): Promise<void> {

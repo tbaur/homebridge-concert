@@ -12,6 +12,7 @@
  */
 import net from 'node:net';
 import type { PluginLogger } from '../types';
+import { type SourceDefinition, type SourceId } from './protocol';
 export interface ConcertClientOptions {
     host: string;
     port?: number;
@@ -31,6 +32,14 @@ export interface SetVolumeWhenReadyOptions {
      */
     onWaiting?: () => void;
 }
+/** Options for {@link ConcertClient.setSourceWhenReady}. */
+export interface SetSourceWhenReadyOptions {
+    /**
+     * Called once after {@link SOURCE_READY_NOT_READY_LOG_AFTER_MS} of retryable
+     * failures (not on the first attempt — normal XR wake stays quiet).
+     */
+    onWaiting?: () => void;
+}
 /**
  * Sends framed automation commands to an AudioControl Concert receiver over TCP.
  */
@@ -44,6 +53,8 @@ export declare class ConcertClient {
     private readonly createConnection;
     /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
     private readonly volumeQueryInFlight;
+    /** Coalesce concurrent source queries for the same zone (poll fan-out). */
+    private readonly sourceQueryInFlight;
     /** Last successfully observed power state per zone. */
     private readonly lastPowerOnByZone;
     /**
@@ -113,10 +124,36 @@ export declare class ConcertClient {
      * Each attempt takes the TCP lock briefly; the wait between attempts does not.
      */
     setVolumeWhenReady(level: number, zone?: number, options?: SetVolumeWhenReadyOptions): Promise<void>;
+    /**
+     * Query the current input source id for the zone.
+     *
+     * Concurrent callers for the same zone share one in-flight query.
+     * Retries once on ConnectionError (same as power / volume query).
+     */
+    getSource(zone?: number): Promise<SourceId>;
+    private getSourceUnlocked;
+    /**
+     * Select an input source for the zone (discrete RC5 source key).
+     *
+     * When the set ack is missing (ConnectionError), settle and confirm via
+     * source query before failing — matching power/volume set resilience.
+     *
+     * @param source - Source id (`cd`), label (`CD`), or definition
+     */
+    setSource(source: SourceId | string | SourceDefinition, zone?: number): Promise<void>;
+    /**
+     * Select a source, retrying politely while the receiver finishes waking.
+     *
+     * Same wake window as {@link setVolumeWhenReady} so Shortcuts can Set Input
+     * after power-on without a fixed Wait.
+     */
+    setSourceWhenReady(source: SourceId | string | SourceDefinition, zone?: number, options?: SetSourceWhenReadyOptions): Promise<void>;
     /** True when a power query reports the desired on/off state. */
     private verifyPowerState;
     /** True when a volume query reports the desired level. */
     private verifyVolumeLevel;
+    /** True when a source query reports the desired input. */
+    private verifySource;
     private assertOk;
     /**
      * Open a TCP connection, write one request frame, and resolve with the first

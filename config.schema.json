@@ -2,7 +2,7 @@
   "pluginAlias": "Concert",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Homebridge plugin for AudioControl Concert XR receivers. Expose power and volume-preset switches over the LAN IP control port (default 50000). On the receiver, set **Control** to **IP** and **Standby Mode** to **IP and HDMI ON** so the unit remains reachable while in standby.",
+  "headerDisplay": "Homebridge plugin for AudioControl Concert XR receivers. Expose power, volume-preset, and source-preset switches over the LAN IP control port (default 50000). On the receiver, set **Control** to **IP** and **Standby Mode** to **IP and HDMI ON** so the unit remains reachable while in standby.",
   "footerDisplay": "For help, see the [README](https://github.com/tbaur/homebridge-concert#readme). Protocol details for contributors: [docs/PROTOCOL.md](https://github.com/tbaur/homebridge-concert/blob/main/docs/PROTOCOL.md).",
   "schema": {
     "type": "object",
@@ -37,7 +37,7 @@
         "title": "Accessories",
         "type": "array",
         "minItems": 1,
-        "description": "HomeKit switches to expose. Add a power switch and optional volume-preset switches (On = at that level).",
+        "description": "HomeKit switches to expose. Add power, volume-preset, and/or source-preset switches (On = at that level / on that input).",
         "items": {
           "title": "Accessory",
           "type": "object",
@@ -47,14 +47,14 @@
               "title": "Type",
               "type": "string",
               "default": "power",
-              "enum": ["power", "volumePreset"],
-              "description": "power = on/standby switch. volumePreset = On when the zone is at the configured volume level; turning On sets that level."
+              "enum": ["power", "volumePreset", "sourcePreset"],
+              "description": "power = on/standby switch. volumePreset = On when the zone is at the configured volume level; turning On sets that level. sourcePreset = On when the zone is on the configured input; turning On selects that input."
             },
             "name": {
               "title": "HomeKit Name",
               "type": "string",
               "placeholder": "XR-8S Power",
-              "description": "Display name for this switch in the Home app (e.g. XR-8S Power, XR-8S Volume)."
+              "description": "Display name for this switch in the Home app (e.g. XR-8S Power, XR-8S Volume, XR-8S CD)."
             },
             "zone": {
               "title": "Zone",
@@ -67,7 +67,29 @@
               "title": "Volume Level",
               "type": "integer",
               "placeholder": "57",
-              "description": "Required when Type is volumePreset (0–99). Ignored for power."
+              "description": "Required when Type is volumePreset (0–99). Ignored for power and sourcePreset."
+            },
+            "source": {
+              "title": "Input Source",
+              "type": "string",
+              "default": "CD",
+              "enum": [
+                "CD",
+                "BD",
+                "AV",
+                "SAT",
+                "PVR",
+                "UHD",
+                "AUX",
+                "DISPLAY",
+                "FM",
+                "DAB",
+                "NET",
+                "STB",
+                "GAME",
+                "BT"
+              ],
+              "description": "Required when Type is sourcePreset. Selects which XR input this switch targets (e.g. CD). Ignored for power and volumePreset."
             }
           }
         }
@@ -105,7 +127,8 @@
           "type": "select",
           "titleMap": [
             { "name": "Power (on / standby)", "value": "power" },
-            { "name": "Volume preset", "value": "volumePreset" }
+            { "name": "Volume preset", "value": "volumePreset" },
+            { "name": "Source / input preset", "value": "sourcePreset" }
           ]
         },
         "accessories[].name",
@@ -122,6 +145,29 @@
           "type": "integer",
           "condition": {
             "functionBody": "return model.accessories?.[arrayIndices?.[0]]?.type === 'volumePreset';"
+          }
+        },
+        {
+          "key": "accessories[].source",
+          "type": "select",
+          "titleMap": [
+            { "name": "CD", "value": "CD" },
+            { "name": "BD", "value": "BD" },
+            { "name": "AV", "value": "AV" },
+            { "name": "SAT", "value": "SAT" },
+            { "name": "PVR", "value": "PVR" },
+            { "name": "UHD", "value": "UHD" },
+            { "name": "AUX", "value": "AUX" },
+            { "name": "DISPLAY", "value": "DISPLAY" },
+            { "name": "FM", "value": "FM" },
+            { "name": "DAB", "value": "DAB" },
+            { "name": "NET", "value": "NET" },
+            { "name": "STB", "value": "STB" },
+            { "name": "GAME", "value": "GAME" },
+            { "name": "BT", "value": "BT" }
+          ],
+          "condition": {
+            "functionBody": "return model.accessories?.[arrayIndices?.[0]]?.type === 'sourcePreset';"
           }
         }
       ]

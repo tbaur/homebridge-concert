@@ -19,10 +19,13 @@
  *
  * Volume uses command 0x0D with data 0x00–0x63 (0–99) to set, or 0xF0 to query.
  *
+ * Source *query* uses command 0x1D with data 0xF0. Source *set* uses Simulate
+ * RC5 IR (0x08) with discrete source keys — see {@link ./sources}.
+ *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ANSWER_INVALID_STATE = exports.ANSWER_OK = exports.RC5_POWER_OFF = exports.RC5_POWER_ON = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.VOLUME_QUERY = exports.POWER_QUERY = exports.POWER_ON = exports.POWER_STANDBY = exports.COMMAND_RC5 = exports.COMMAND_VOLUME = exports.COMMAND_POWER = exports.FRAME_END = exports.FRAME_START = void 0;
+exports.ANSWER_INVALID_STATE = exports.ANSWER_OK = exports.RC5_POWER_OFF = exports.RC5_POWER_ON = exports.RC5_SYSTEM_ZONE2 = exports.RC5_SYSTEM_ZONE1 = exports.sourceSupportsZone = exports.sourceFromQueryCode = exports.resolveSourceDefinition = exports.rc5CommandForSource = exports.SOURCE_LABELS = exports.SOURCE_IDS = exports.SOURCE_DEFINITIONS = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.SOURCE_FOLLOW_ZONE1 = exports.SOURCE_QUERY = exports.VOLUME_QUERY = exports.POWER_QUERY = exports.POWER_ON = exports.POWER_STANDBY = exports.COMMAND_RC5 = exports.COMMAND_SOURCE = exports.COMMAND_VOLUME = exports.COMMAND_POWER = exports.FRAME_END = exports.FRAME_START = void 0;
 exports.buildRequest = buildRequest;
 exports.rc5SystemForZone = rc5SystemForZone;
 exports.buildRc5 = buildRc5;
@@ -31,15 +34,20 @@ exports.buildPowerStandby = buildPowerStandby;
 exports.buildPowerQuery = buildPowerQuery;
 exports.buildVolumeQuery = buildVolumeQuery;
 exports.buildVolumeSet = buildVolumeSet;
+exports.buildSourceQuery = buildSourceQuery;
+exports.buildSourceSet = buildSourceSet;
 exports.tryParseResponse = tryParseResponse;
 exports.describeAnswerCode = describeAnswerCode;
 exports.isPowerOn = isPowerOn;
 exports.parseVolume = parseVolume;
+exports.parseSource = parseSource;
+exports.isSourceFollowZone1 = isSourceFollowZone1;
 exports.formatFrame = formatFrame;
 const errors_1 = require("../errors");
 const settings_1 = require("../settings");
 Object.defineProperty(exports, "MAX_VOLUME", { enumerable: true, get: function () { return settings_1.MAX_VOLUME; } });
 Object.defineProperty(exports, "MIN_VOLUME", { enumerable: true, get: function () { return settings_1.MIN_VOLUME; } });
+const sources_1 = require("./sources");
 /** Start-of-frame byte (`!`). */
 exports.FRAME_START = 0x21;
 /** End-of-frame byte (carriage return). */
@@ -48,7 +56,9 @@ exports.FRAME_END = 0x0D;
 exports.COMMAND_POWER = 0x00;
 /** Absolute volume set / query command code. */
 exports.COMMAND_VOLUME = 0x0D;
-/** Simulate RC5 IR command (used for discrete power on/off). */
+/** Current source / input query command code. */
+exports.COMMAND_SOURCE = 0x1D;
+/** Simulate RC5 IR command (used for discrete power on/off and source select). */
 exports.COMMAND_RC5 = 0x08;
 /** Enter standby (status / legacy set data byte). */
 exports.POWER_STANDBY = 0x00;
@@ -58,6 +68,18 @@ exports.POWER_ON = 0x01;
 exports.POWER_QUERY = 0xF0;
 /** Request current volume (query sentinel). */
 exports.VOLUME_QUERY = 0xF0;
+/** Request current source / input (query sentinel). */
+exports.SOURCE_QUERY = 0xF0;
+/** Zone 2 source status: follow Zone 1 (not a discrete input). */
+exports.SOURCE_FOLLOW_ZONE1 = 0x00;
+var sources_2 = require("./sources");
+Object.defineProperty(exports, "SOURCE_DEFINITIONS", { enumerable: true, get: function () { return sources_2.SOURCE_DEFINITIONS; } });
+Object.defineProperty(exports, "SOURCE_IDS", { enumerable: true, get: function () { return sources_2.SOURCE_IDS; } });
+Object.defineProperty(exports, "SOURCE_LABELS", { enumerable: true, get: function () { return sources_2.SOURCE_LABELS; } });
+Object.defineProperty(exports, "rc5CommandForSource", { enumerable: true, get: function () { return sources_2.rc5CommandForSource; } });
+Object.defineProperty(exports, "resolveSourceDefinition", { enumerable: true, get: function () { return sources_2.resolveSourceDefinition; } });
+Object.defineProperty(exports, "sourceFromQueryCode", { enumerable: true, get: function () { return sources_2.sourceFromQueryCode; } });
+Object.defineProperty(exports, "sourceSupportsZone", { enumerable: true, get: function () { return sources_2.sourceSupportsZone; } });
 /** RC5 system code for Zone 1 advanced / discrete functions. */
 exports.RC5_SYSTEM_ZONE1 = 0x10;
 /** RC5 system code for Zone 2. */
@@ -162,6 +184,25 @@ function buildVolumeSet(zone, level) {
     }
     return buildRequest(zone, exports.COMMAND_VOLUME, Buffer.from([level]));
 }
+/** Build a current-source query for the given zone. */
+function buildSourceQuery(zone) {
+    return buildRequest(zone, exports.COMMAND_SOURCE, Buffer.from([exports.SOURCE_QUERY]));
+}
+/**
+ * Build a discrete source-select request (RC5 source key).
+ *
+ * @param zone - Automation zone (1 or 2)
+ * @param source - Source definition or config id / label
+ */
+function buildSourceSet(zone, source) {
+    const definition = typeof source === 'string'
+        ? (0, sources_1.resolveSourceDefinition)(source)
+        : source;
+    if (!definition) {
+        throw new RangeError(`Unknown source "${String(source)}"`);
+    }
+    return buildRc5(zone, rc5SystemForZone(zone), (0, sources_1.rc5CommandForSource)(definition, zone));
+}
 /**
  * Extract the first complete response frame from a buffer, if present.
  *
@@ -245,6 +286,32 @@ function parseVolume(data) {
         throw new errors_1.ProtocolError(`Unexpected volume byte 0x${level.toString(16)}`);
     }
     return level;
+}
+/**
+ * Interpret a source-command (0x1D) response data byte as a known input.
+ *
+ * Zone 2 “Follow Zone 1” ({@link SOURCE_FOLLOW_ZONE1}) is not a discrete
+ * input — callers that need the effective source should resolve Zone 1.
+ *
+ * @throws {ProtocolError} when the payload is empty, Follow Zone 1, or unknown
+ */
+function parseSource(data) {
+    if (data.length < 1) {
+        throw new errors_1.ProtocolError('Source response data is empty');
+    }
+    const code = data[0];
+    if (code === exports.SOURCE_FOLLOW_ZONE1) {
+        throw new errors_1.ProtocolError('Source is Follow Zone 1 (not a discrete input)');
+    }
+    const source = (0, sources_1.sourceFromQueryCode)(code);
+    if (!source) {
+        throw new errors_1.ProtocolError(`Unexpected source byte 0x${code.toString(16)}`);
+    }
+    return source;
+}
+/** True when 0x1D data is Zone 2 “Follow Zone 1”. */
+function isSourceFollowZone1(data) {
+    return data.length >= 1 && data[0] === exports.SOURCE_FOLLOW_ZONE1;
 }
 /** Hex dump of a frame for debug logging (no newlines). */
 function formatFrame(frame) {

@@ -9,6 +9,11 @@
  */
 
 import {
+  resolveSourceDefinition,
+  sourceSupportsZone,
+  SOURCE_LABELS,
+} from '../api/protocol'
+import {
   DEFAULT_CONTROL_PORT,
   DEFAULT_REFRESH_RATE_SEC,
   DEFAULT_ZONE,
@@ -64,13 +69,16 @@ export function isValidHost(value: string): boolean {
 }
 
 function isAccessoryKind(value: unknown): value is AccessoryKind {
-  return value === 'power' || value === 'volumePreset'
+  return value === 'power' || value === 'volumePreset' || value === 'sourcePreset'
 }
 
 /** Stable identity key used for duplicate detection and UUID generation. */
 export function accessoryIdentityKey(accessory: ResolvedAccessory): string {
   if (accessory.kind === 'volumePreset') {
     return `z${accessory.zone}:vol:${accessory.volume}`
+  }
+  if (accessory.kind === 'sourcePreset') {
+    return `z${accessory.zone}:src:${accessory.source}`
   }
   return `z${accessory.zone}:power`
 }
@@ -177,7 +185,7 @@ function tryResolveAccessory(
   }
 
   if (!isAccessoryKind(entry.type)) {
-    errors.push(`${label}.type must be "power" or "volumePreset".`)
+    errors.push(`${label}.type must be "power", "volumePreset", or "sourcePreset".`)
     return undefined
   }
 
@@ -200,6 +208,36 @@ function tryResolveAccessory(
       kind: 'power',
       name: entry.name.trim(),
       zone,
+    }
+  }
+
+  if (entry.type === 'sourcePreset') {
+    if (!isNonEmptyString(entry.source)) {
+      errors.push(
+        `${label}.source is required for sourcePreset `
+        + `(one of: ${SOURCE_LABELS.join(', ')}).`,
+      )
+      return undefined
+    }
+    const definition = resolveSourceDefinition(entry.source)
+    if (!definition) {
+      errors.push(
+        `${label}.source "${entry.source}" is not a known input `
+        + `(one of: ${SOURCE_LABELS.join(', ')}).`,
+      )
+      return undefined
+    }
+    if (!sourceSupportsZone(definition, zone)) {
+      errors.push(
+        `${label}.source "${definition.label}" is not available for zone ${zone}.`,
+      )
+      return undefined
+    }
+    return {
+      kind: 'sourcePreset',
+      name: entry.name.trim(),
+      zone,
+      source: definition.id,
     }
   }
 

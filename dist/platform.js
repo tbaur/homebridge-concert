@@ -132,6 +132,7 @@ class ConcertPlatform {
                     ? previousSerial
                     : (0, utils_1.newAccessorySerialNumber)(),
                 volume: accessoryConfig.volume,
+                source: accessoryConfig.source,
             };
             if (!accessory) {
                 this.log.info(`Registering accessory "${accessoryConfig.name}" `
@@ -156,6 +157,9 @@ class ConcertPlatform {
     createHandler(config, accessory, client) {
         if (config.kind === 'power') {
             return new devices_1.PowerAccessory(this, accessory, client);
+        }
+        if (config.kind === 'sourcePreset') {
+            return new devices_1.SourcePresetAccessory(this, accessory, client);
         }
         return new devices_1.VolumePresetAccessory(this, accessory, client);
     }

@@ -17,7 +17,7 @@ import type {
 } from 'homebridge'
 
 import { ConcertClient } from './api'
-import { PowerAccessory, VolumePresetAccessory } from './devices'
+import { PowerAccessory, SourcePresetAccessory, VolumePresetAccessory } from './devices'
 import {
   DEFAULT_MODEL,
   DEFAULT_REFRESH_RATE_SEC,
@@ -176,6 +176,7 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
           ? previousSerial
           : newAccessorySerialNumber(),
         volume: accessoryConfig.volume,
+        source: accessoryConfig.source,
       }
 
       if (!accessory) {
@@ -211,6 +212,9 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   ): RefreshableAccessory {
     if (config.kind === 'power') {
       return new PowerAccessory(this, accessory, client)
+    }
+    if (config.kind === 'sourcePreset') {
+      return new SourcePresetAccessory(this, accessory, client)
     }
     return new VolumePresetAccessory(this, accessory, client)
   }

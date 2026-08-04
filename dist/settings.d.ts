@@ -74,6 +74,13 @@ export declare const VOLUME_READY_TIMEOUT_MS = 60000;
  * boots do not spam the log.
  */
 export declare const VOLUME_READY_NOT_READY_LOG_AFTER_MS = 30000;
+/**
+ * Source-select wake retries share the volume timing window — cold boot often
+ * reports power On before input changes are accepted (`0x85` / timeouts).
+ */
+export declare const SOURCE_READY_RETRY_INTERVAL_MS = 2000;
+export declare const SOURCE_READY_TIMEOUT_MS = 60000;
+export declare const SOURCE_READY_NOT_READY_LOG_AFTER_MS = 30000;
 /** Maximum time allowed for establishing a TCP connection. */
 export declare const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 /**
