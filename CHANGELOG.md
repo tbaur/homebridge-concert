@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [1.0.1](https://github.com/tbaur/homebridge-concert/compare/v1.0.0...v1.0.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* publish supports-hap keyword for Homebridge UI ([9f2124b](https://github.com/tbaur/homebridge-concert/commit/9f2124beb7d78a7bc1990a209ef9e44863969b18))
+
 ## [1.0.0](https://github.com/tbaur/homebridge-concert/compare/v0.2.1...v1.0.0) (2026-08-05)
 
 
