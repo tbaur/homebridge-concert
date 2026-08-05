@@ -85,6 +85,8 @@ An accessory's UUID is derived from its identity key alone (`z1:power`, `z1:vol:
 
 `pairWithCached` maps each configured entry to the cached accessory it should reuse: exact UUID matches are claimed first, then anything left over is matched on the identity recorded in its context. That second pass is the migration for the UUID change — an accessory cached under the old address-based scheme is *adopted* rather than replaced, so upgrading costs the user nothing. Pairing runs before `removeStaleAccessories`, because an adopted accessory keeps its original UUID and must count as one to keep. Identity matching compares the preset target too, so two volume presets on one zone can never adopt each other's accessory.
 
+A HAP accessory UUID is immutable, so adoption is permanent rather than a one-time conversion: an adopted accessory keeps its legacy UUID and takes the identity-matching path on every launch. `adoptedLegacyUuid` is persisted into the context so the notice is logged at info once and at debug thereafter — otherwise every restart announces an upgrade that already happened.
+
 Changing a preset's value still produces a different accessory, because the value *is* the identity. Renaming is handled separately and in place: `applyAccessoryDisplayName` uses `updateDisplayName` on Homebridge ≥1.8 and falls back to writing `displayName` plus the private `_associatedHAPAccessory` on older versions, because assigning `displayName` alone is not persisted across a cache restore.
 
 ### No handler means No Response
