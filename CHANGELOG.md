@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [1.0.3](https://github.com/tbaur/homebridge-concert/compare/v1.0.2...v1.0.3) (2026-08-05)
+
+
+### Bug Fixes
+
+* publish Homebridge verified badge on npm ([24af4f6](https://github.com/tbaur/homebridge-concert/commit/24af4f6e58a04684cbfae7d5bab337290a1d190f))
+
 ## [1.0.2](https://github.com/tbaur/homebridge-concert/compare/v1.0.1...v1.0.2) (2026-08-05)
 
 
