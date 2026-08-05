@@ -19,7 +19,7 @@
  * Volume uses command 0x0D with data 0x00–0x63 (0–99) to set, or 0xF0 to query.
  *
  * Source *query* uses command 0x1D with data 0xF0. Source *set* uses Simulate
- * RC5 IR (0x08) with discrete source keys — see {@link ./sources}.
+ * RC5 IR (0x08) with discrete source keys — see `./sources.ts`.
  *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
@@ -39,6 +39,21 @@ export const FRAME_START = 0x21
 
 /** End-of-frame byte (carriage return). */
 export const FRAME_END = 0x0D
+
+/** Largest value a single protocol byte can hold, and so the longest Data run. */
+const MAX_BYTE = 0xFF
+
+/** Non-data bytes in a request: St Zn Cc Dl … Et. */
+const REQUEST_OVERHEAD_BYTES = 5
+
+/** Index of the first Data byte in a request. */
+const REQUEST_DATA_OFFSET = 4
+
+/** Non-data bytes in a response: St Zn Cc Ac Dl … Et. */
+const RESPONSE_OVERHEAD_BYTES = 6
+
+/** Offset of the first Data byte within a response frame. */
+const RESPONSE_DATA_OFFSET = 5
 
 /** Power / standby status command code (query + status responses). */
 export const COMMAND_POWER = 0x00
@@ -70,13 +85,9 @@ export const SOURCE_QUERY = 0xF0
 /** Zone 2 source status: follow Zone 1 (not a discrete input). */
 export const SOURCE_FOLLOW_ZONE1 = 0x00
 
-/** Re-export volume bounds for protocol callers (single source: settings). */
-export { MIN_VOLUME, MAX_VOLUME }
-
 export type { SourceDefinition, SourceId }
 export {
   SOURCE_DEFINITIONS,
-  SOURCE_IDS,
   SOURCE_LABELS,
   rc5CommandForSource,
   resolveSourceDefinition,
@@ -105,14 +116,19 @@ export const ANSWER_OK = 0x00
  */
 export const ANSWER_INVALID_STATE = 0x85
 
-/** Human-readable names for known non-OK answer codes. */
-const ANSWER_CODE_NAMES: Readonly<Record<number, string>> = {
-  0x82: 'incorrect zone',
-  0x83: 'incorrect command',
-  0x84: 'incorrect parameter',
-  [ANSWER_INVALID_STATE]: 'invalid command in current state',
-  0x86: 'incorrect data length',
-}
+/**
+ * Human-readable names for known non-OK answer codes.
+ *
+ * A Map (not an object literal) because the key comes straight off the wire —
+ * this keeps lookups away from `Object.prototype`, matching {@link sourceFromQueryCode}.
+ */
+const ANSWER_CODE_NAMES: ReadonlyMap<number, string> = new Map([
+  [0x82, 'incorrect zone'],
+  [0x83, 'incorrect command'],
+  [0x84, 'incorrect parameter'],
+  [ANSWER_INVALID_STATE, 'invalid command in current state'],
+  [0x86, 'incorrect data length'],
+])
 
 /** Parsed response frame from the receiver. */
 export interface ProtocolResponse {
@@ -133,20 +149,20 @@ export function buildRequest(zone: number, command: number, data: Buffer = Buffe
   if (!Number.isInteger(zone) || zone < 1 || zone > 2) {
     throw new RangeError(`Zone must be 1 or 2, got ${zone}`)
   }
-  if (!Number.isInteger(command) || command < 0 || command > 0xFF) {
-    throw new RangeError(`Command must be a byte (0–255), got ${command}`)
+  if (!Number.isInteger(command) || command < 0 || command > MAX_BYTE) {
+    throw new RangeError(`Command must be a byte (0–${MAX_BYTE}), got ${command}`)
   }
-  if (data.length > 255) {
-    throw new RangeError(`Data length must be ≤ 255, got ${data.length}`)
+  if (data.length > MAX_BYTE) {
+    throw new RangeError(`Data length must be ≤ ${MAX_BYTE}, got ${data.length}`)
   }
 
-  const frame = Buffer.alloc(5 + data.length)
+  const frame = Buffer.alloc(REQUEST_OVERHEAD_BYTES + data.length)
   frame[0] = FRAME_START
   frame[1] = zone
   frame[2] = command
   frame[3] = data.length
   if (data.length > 0) {
-    data.copy(frame, 4)
+    data.copy(frame, REQUEST_DATA_OFFSET)
   }
   frame[frame.length - 1] = FRAME_END
   return frame
@@ -248,12 +264,28 @@ export function tryParseResponse(buffer: Buffer): { response: ProtocolResponse; 
     }
 
     // Minimum response: St Zn Cc Ac Dl Et  (Dl = 0)
-    if (buffer.length < start + 6) {
+    if (buffer.length < start + RESPONSE_OVERHEAD_BYTES) {
       return null
     }
 
+    // The length check above guarantees these header bytes exist; the explicit
+    // test is what `noUncheckedIndexedAccess` requires. Throwing rather than
+    // returning null keeps a genuine violation diagnosable instead of surfacing
+    // as an unexplained request timeout.
+    const zone = buffer[start + 1]
+    const command = buffer[start + 2]
+    const answerCode = buffer[start + 3]
     const dataLength = buffer[start + 4]
-    const totalLength = 6 + dataLength
+    if (
+      zone === undefined
+      || command === undefined
+      || answerCode === undefined
+      || dataLength === undefined
+    ) {
+      throw new ProtocolError('Response header truncated after a length check passed')
+    }
+
+    const totalLength = RESPONSE_OVERHEAD_BYTES + dataLength
     if (buffer.length < start + totalLength) {
       return null
     }
@@ -267,10 +299,10 @@ export function tryParseResponse(buffer: Buffer): { response: ProtocolResponse; 
 
     return {
       response: {
-        zone: buffer[start + 1],
-        command: buffer[start + 2],
-        answerCode: buffer[start + 3],
-        data: Buffer.from(buffer.subarray(start + 5, endIndex)),
+        zone,
+        command,
+        answerCode,
+        data: Buffer.from(buffer.subarray(start + RESPONSE_DATA_OFFSET, endIndex)),
       },
       consumed: start + totalLength,
     }
@@ -284,7 +316,7 @@ export function describeAnswerCode(answerCode: number): string {
   if (answerCode === ANSWER_OK) {
     return 'ok'
   }
-  const name = ANSWER_CODE_NAMES[answerCode]
+  const name = ANSWER_CODE_NAMES.get(answerCode)
   if (name) {
     return `0x${answerCode.toString(16)} (${name})`
   }
@@ -298,16 +330,17 @@ export function describeAnswerCode(answerCode: number): string {
  * @throws {ProtocolError} when the payload is empty or not a known power state
  */
 export function isPowerOn(data: Buffer): boolean {
-  if (data.length < 1) {
+  const state = data[0]
+  if (state === undefined) {
     throw new ProtocolError('Power response data is empty')
   }
-  if (data[0] === POWER_ON) {
+  if (state === POWER_ON) {
     return true
   }
-  if (data[0] === POWER_STANDBY) {
+  if (state === POWER_STANDBY) {
     return false
   }
-  throw new ProtocolError(`Unexpected power state byte 0x${data[0].toString(16)}`)
+  throw new ProtocolError(`Unexpected power state byte 0x${state.toString(16)}`)
 }
 
 /**
@@ -316,10 +349,10 @@ export function isPowerOn(data: Buffer): boolean {
  * @throws {ProtocolError} when the payload is empty or out of range
  */
 export function parseVolume(data: Buffer): number {
-  if (data.length < 1) {
+  const level = data[0]
+  if (level === undefined) {
     throw new ProtocolError('Volume response data is empty')
   }
-  const level = data[0]
   if (level < MIN_VOLUME || level > MAX_VOLUME) {
     throw new ProtocolError(`Unexpected volume byte 0x${level.toString(16)}`)
   }
@@ -335,10 +368,10 @@ export function parseVolume(data: Buffer): number {
  * @throws {ProtocolError} when the payload is empty, Follow Zone 1, or unknown
  */
 export function parseSource(data: Buffer): SourceDefinition {
-  if (data.length < 1) {
+  const code = data[0]
+  if (code === undefined) {
     throw new ProtocolError('Source response data is empty')
   }
-  const code = data[0]
   if (code === SOURCE_FOLLOW_ZONE1) {
     throw new ProtocolError('Source is Follow Zone 1 (not a discrete input)')
   }

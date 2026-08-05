@@ -20,6 +20,14 @@ export interface PluginLogger {
 }
 /** Supported HomeKit accessory kinds exposed by this platform. */
 export type AccessoryKind = 'power' | 'volumePreset' | 'sourcePreset';
+/**
+ * Narrow an unknown value to an {@link AccessoryKind}.
+ *
+ * Shared so config validation and cache validation cannot drift apart; the
+ * exhaustive `switch` in the platform will not catch a missed update here,
+ * because these narrow from `unknown`.
+ */
+export declare function isAccessoryKind(value: unknown): value is AccessoryKind;
 /** One entry in the platform `accessories` array. */
 export interface ConcertAccessoryConfig {
     /** HomeKit accessory kind. */
@@ -84,8 +92,16 @@ export interface AccessoryContext {
     /** Present when `kind` is `sourcePreset`. */
     source?: SourceId;
 }
+/**
+ * Why a refresh is happening.
+ *
+ * `poll` is the scheduled timer sweep: a failure there is real news. `post-set`
+ * is the opportunistic re-read straight after a successful write, where the
+ * receiver is routinely still waking and a failure proves nothing.
+ */
+export type RefreshReason = 'poll' | 'post-set';
 /** Common surface for platform-polled accessory handlers. */
 export interface RefreshableAccessory {
-    refresh(): Promise<void>;
+    refresh(reason?: RefreshReason): Promise<void>;
 }
 //# sourceMappingURL=index.d.ts.map

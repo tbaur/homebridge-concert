@@ -5,17 +5,20 @@
  * See LICENSE file for full license text
  */
 
+export { parseAccessoryContext } from './context'
+export { describeError, describeErrorStack } from './errors'
 export {
   ensureAccessorySerialNumber,
   newAccessorySerialNumber,
 } from './serial'
 export {
+  ConfigValidationError,
   accessoryIdentityKey,
+  forLog,
   isValidHost,
   resolveAccessories,
   resolvePort,
   resolveRefreshRateSec,
-  resolveZone,
   validateConfig,
 } from './validators'
 export type { ConfigValidationResult } from './validators'

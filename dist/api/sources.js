@@ -14,7 +14,7 @@
  * should be verified on Concert XR before treating as production-proven.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SOURCE_LABELS = exports.SOURCE_IDS = exports.SOURCE_DEFINITIONS = void 0;
+exports.SOURCE_LABELS = exports.SOURCE_DEFINITIONS = void 0;
 exports.resolveSourceDefinition = resolveSourceDefinition;
 exports.sourceFromQueryCode = sourceFromQueryCode;
 exports.rc5CommandForSource = rc5CommandForSource;
@@ -42,8 +42,6 @@ exports.SOURCE_DEFINITIONS = [
 ];
 const BY_ID = new Map(exports.SOURCE_DEFINITIONS.map((source) => [source.id, source]));
 const BY_QUERY = new Map(exports.SOURCE_DEFINITIONS.map((source) => [source.queryCode, source]));
-/** All accepted `accessories[].source` values (lowercase ids). */
-exports.SOURCE_IDS = exports.SOURCE_DEFINITIONS.map((s) => s.id);
 /** Labels for Homebridge UI / docs (uppercase front-panel names). */
 exports.SOURCE_LABELS = exports.SOURCE_DEFINITIONS.map((s) => s.label);
 /**

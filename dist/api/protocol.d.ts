@@ -19,11 +19,10 @@
  * Volume uses command 0x0D with data 0x00–0x63 (0–99) to set, or 0xF0 to query.
  *
  * Source *query* uses command 0x1D with data 0xF0. Source *set* uses Simulate
- * RC5 IR (0x08) with discrete source keys — see {@link ./sources}.
+ * RC5 IR (0x08) with discrete source keys — see `./sources.ts`.
  *
  * @see AudioControl X/XR Series user manual — Automation Integration
  */
-import { MAX_VOLUME, MIN_VOLUME } from '../settings';
 import { type SourceDefinition, type SourceId } from './sources';
 /** Start-of-frame byte (`!`). */
 export declare const FRAME_START = 33;
@@ -49,10 +48,8 @@ export declare const VOLUME_QUERY = 240;
 export declare const SOURCE_QUERY = 240;
 /** Zone 2 source status: follow Zone 1 (not a discrete input). */
 export declare const SOURCE_FOLLOW_ZONE1 = 0;
-/** Re-export volume bounds for protocol callers (single source: settings). */
-export { MIN_VOLUME, MAX_VOLUME };
 export type { SourceDefinition, SourceId };
-export { SOURCE_DEFINITIONS, SOURCE_IDS, SOURCE_LABELS, rc5CommandForSource, resolveSourceDefinition, sourceFromQueryCode, sourceSupportsZone, } from './sources';
+export { SOURCE_DEFINITIONS, SOURCE_LABELS, rc5CommandForSource, resolveSourceDefinition, sourceFromQueryCode, sourceSupportsZone, } from './sources';
 /** RC5 system code for Zone 1 advanced / discrete functions. */
 export declare const RC5_SYSTEM_ZONE1 = 16;
 /** RC5 system code for Zone 2. */

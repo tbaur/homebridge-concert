@@ -39,11 +39,11 @@
   "homepage": "https://github.com/tbaur/homebridge-concert#readme",
   "overrides": {
     "js-yaml": "^4.2.0",
-    "brace-expansion": "5.0.8"
+    "brace-expansion": "^5.0.9"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.1.0",
+    "@types/node": "^20.19.43",
     "@typescript-eslint/eslint-plugin": "^8.51.0",
     "@typescript-eslint/parser": "^8.51.0",
     "eslint": "^10.6.0",
@@ -61,21 +61,23 @@
     "build": "tsc",
     "build:watch": "tsc --watch",
     "clean": "rm -rf dist",
-    "prepare": "npm run build",
     "prepublishOnly": "npm run clean && npm run build",
     "pretest": "npm run build",
     "test": "NODE_ENV=test jest --coverage",
-    "test:watch": "NODE_ENV=test jest --watch",
-    "test:unit": "npm run build && NODE_ENV=test jest --coverage --testPathPattern=tests/unit",
-    "lint": "eslint . --ignore-pattern node_modules --ignore-pattern dist --ignore-pattern coverage",
-    "lint:fix": "eslint . --fix --ignore-pattern node_modules --ignore-pattern dist --ignore-pattern coverage"
+    "test:watch": "NODE_ENV=test jest --watch --coverage=false",
+    "test:unit": "npm run build && NODE_ENV=test jest --coverage --testPathPatterns tests/unit",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix --max-warnings 0"
   },
   "files": [
     "dist/**/*",
+    "!dist/**/*.map",
     "config.schema.json",
     "docs/**/*",
     "LICENSE",
     "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
     "DEVELOPMENT.md"
   ]
 }

@@ -77,9 +77,6 @@ const BY_QUERY = new Map<number, SourceDefinition>(
   SOURCE_DEFINITIONS.map((source) => [source.queryCode, source]),
 )
 
-/** All accepted `accessories[].source` values (lowercase ids). */
-export const SOURCE_IDS: readonly SourceId[] = SOURCE_DEFINITIONS.map((s) => s.id)
-
 /** Labels for Homebridge UI / docs (uppercase front-panel names). */
 export const SOURCE_LABELS: readonly string[] = SOURCE_DEFINITIONS.map((s) => s.label)
 

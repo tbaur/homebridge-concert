@@ -54,7 +54,7 @@
               "title": "HomeKit Name",
               "type": "string",
               "placeholder": "XR-8S Power",
-              "description": "Display name for this switch in the Home app (e.g. XR-8S Power, XR-8S Volume, XR-8S CD)."
+              "description": "Display name for this switch in the Home app (e.g. XR-8S Power, XR-8S Volume, XR-8S Source)."
             },
             "zone": {
               "title": "Zone",
@@ -66,13 +66,14 @@
             "volume": {
               "title": "Volume Level",
               "type": "integer",
+              "minimum": 0,
+              "maximum": 99,
               "placeholder": "57",
               "description": "Required when Type is volumePreset (0–99). Ignored for power and sourcePreset."
             },
             "source": {
               "title": "Input Source",
               "type": "string",
-              "default": "CD",
               "enum": [
                 "CD",
                 "BD",
@@ -89,7 +90,8 @@
                 "GAME",
                 "BT"
               ],
-              "description": "Required when Type is sourcePreset. Selects which XR input this switch targets (e.g. CD). Ignored for power and volumePreset."
+              "placeholder": "CD",
+              "description": "Required when Type is sourcePreset. Selects which XR input this switch targets (e.g. CD). Ignored for power and volumePreset. No default, so power and volumePreset entries are not given a stray source value."
             }
           }
         }

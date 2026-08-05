@@ -7,7 +7,10 @@
 
 import type { PlatformAccessory } from 'homebridge'
 
+import { ANSWER_INVALID_STATE } from '../../src/api/protocol'
 import { SourcePresetAccessory } from '../../src/devices/source-preset'
+import { ProtocolError } from '../../src/errors'
+import { HOMEKIT_WRITE_BUDGET_MS } from '../../src/settings'
 import type { ConcertClient } from '../../src/api'
 import type ConcertPlatform from '../../src/platform'
 
@@ -21,7 +24,9 @@ class FakeHapStatusError extends Error {
 /** Minimal client mock; tests override methods as needed. */
 function mockClient(overrides: Record<string, unknown> = {}): ConcertClient {
   return {
-    setSourceWhenReady: jest.fn(),
+    // The bounded foreground attempt; the wake retry runs in the background.
+    setSource: jest.fn().mockResolvedValue(undefined),
+    setSourceWhenReady: jest.fn().mockResolvedValue(undefined),
     getSource: jest.fn(),
     getLastPowerState: jest.fn().mockReturnValue(undefined),
     ...overrides,
@@ -60,6 +65,7 @@ function createPlatform(source = 'cd') {
         HapStatusError: FakeHapStatusError,
       },
     },
+    requestRefresh: jest.fn(),
     log: {
       info: jest.fn(),
       warn: jest.fn(),
@@ -87,36 +93,45 @@ function createPlatform(source = 'cd') {
       }
       return undefined
     }),
+    on: jest.fn(),
     addService: jest.fn(),
   } as unknown as PlatformAccessory
 
   return { platform, accessory, switchService, onChar }
 }
 
+/** The snap-back to HomeKit is deferred a macrotask so HAP cannot clobber it. */
+async function flushDeferredUpdates(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
 describe('SourcePresetAccessory', () => {
   it('selects the configured source when turned On', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockResolvedValue(undefined),
+      setSource: jest.fn().mockResolvedValue(undefined),
     })
 
     new SourcePresetAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
     await setHandler(true)
 
-    expect(client.setSourceWhenReady).toHaveBeenCalledWith(
+    // The foreground attempt is bounded so HAP gets an answer before it gives up.
+    expect(client.setSource).toHaveBeenCalledWith(
       'cd',
       1,
-      expect.objectContaining({ onWaiting: expect.any(Function) }),
+      { timeoutMs: HOMEKIT_WRITE_BUDGET_MS },
     )
+    expect(client.setSourceWhenReady).not.toHaveBeenCalled()
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S CD: SET CD')
+    await flushDeferredUpdates()
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
   })
 
-  it('skips setSourceWhenReady when already on the target input', async () => {
+  it('skips setSource when already on the target input', async () => {
     const { platform, accessory, onChar } = createPlatform()
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockResolvedValue(undefined),
+      setSource: jest.fn().mockResolvedValue(undefined),
       getSource: jest.fn().mockResolvedValue('cd'),
     })
 
@@ -126,15 +141,15 @@ describe('SourcePresetAccessory', () => {
     await setHandler(true)
     await setHandler(true)
 
-    expect(client.setSourceWhenReady).not.toHaveBeenCalled()
+    expect(client.setSource).not.toHaveBeenCalled()
     expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S CD: SET CD')
   })
 
-  it('single-flights concurrent On writes into one setSourceWhenReady', async () => {
+  it('single-flights concurrent On writes into one setSource', async () => {
     const { platform, accessory, onChar } = createPlatform()
     let resolveSet: (() => void) | undefined
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+      setSource: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
         resolveSet = resolve
       })),
     })
@@ -145,10 +160,10 @@ describe('SourcePresetAccessory', () => {
     const second = setHandler(true)
     const third = setHandler(true)
 
-    expect(client.setSourceWhenReady).toHaveBeenCalledTimes(1)
+    expect(client.setSource).toHaveBeenCalledTimes(1)
     resolveSet?.()
     await Promise.all([first, second, third])
-    expect(client.setSourceWhenReady).toHaveBeenCalledTimes(1)
+    expect(client.setSource).toHaveBeenCalledTimes(1)
     expect(platform.log.info).toHaveBeenCalledTimes(1)
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S CD: SET CD')
   })
@@ -156,7 +171,7 @@ describe('SourcePresetAccessory', () => {
   it('does not re-set after a successful On when HomeKit repeats the write', async () => {
     const { platform, accessory, onChar } = createPlatform()
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockResolvedValue(undefined),
+      setSource: jest.fn().mockResolvedValue(undefined),
     })
 
     new SourcePresetAccessory(platform, accessory, client)
@@ -165,14 +180,14 @@ describe('SourcePresetAccessory', () => {
     await setHandler(true)
     await setHandler(true)
 
-    expect(client.setSourceWhenReady).toHaveBeenCalledTimes(1)
+    expect(client.setSource).toHaveBeenCalledTimes(1)
     expect(platform.log.info).toHaveBeenCalledTimes(1)
   })
 
   it('treats Off as a no-op and snaps the characteristic back', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockResolvedValue(undefined),
+      setSource: jest.fn().mockResolvedValue(undefined),
       getSource: jest.fn().mockResolvedValue('cd'),
     })
 
@@ -181,7 +196,7 @@ describe('SourcePresetAccessory', () => {
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
     await setHandler(false)
 
-    expect(client.setSourceWhenReady).not.toHaveBeenCalled()
+    expect(client.setSource).not.toHaveBeenCalled()
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
   })
 
@@ -242,10 +257,45 @@ describe('SourcePresetAccessory', () => {
     )
   })
 
-  it('reverts and throws HapStatusError when setSourceWhenReady fails', async () => {
+  it('reports Off when the zone enters standby instead of staying stuck On', async () => {
+    const { platform, accessory, onChar, switchService } = createPlatform()
+    const powered = { value: true }
+    const client = mockClient({
+      getLastPowerState: jest.fn(() => powered.value),
+      getSource: jest.fn().mockResolvedValue('cd'),
+    })
+
+    const handler = new SourcePresetAccessory(platform, accessory, client)
+    await handler.refresh()
+    const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
+    expect(getHandler()).toBe(true)
+
+    powered.value = false
+    await handler.refresh()
+
+    expect(getHandler()).toBe(false)
+    expect(switchService.updateCharacteristic).toHaveBeenLastCalledWith('On', false)
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S CD: OFF (zone in standby)')
+  })
+
+  it('asks the platform to re-read siblings after a successful set', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    const client = mockClient({
+      setSource: jest.fn().mockResolvedValue(undefined),
+    })
+
+    new SourcePresetAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    await setHandler(true)
+
+    // Only one input can be active, so other source presets are now wrong.
+    expect(platform.requestRefresh).toHaveBeenCalled()
+  })
+
+  it('reverts and throws HapStatusError when setSource fails', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockRejectedValue(new Error('offline')),
+      setSource: jest.fn().mockRejectedValue(new Error('offline')),
     })
 
     new SourcePresetAccessory(platform, accessory, client)
@@ -255,27 +305,31 @@ describe('SourcePresetAccessory', () => {
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', false)
   })
 
-  it('logs a friendly not-ready message when onWaiting fires', async () => {
-    const { platform, accessory, onChar } = createPlatform()
+  it('acknowledges the write and finishes in the background when the receiver is waking', async () => {
+    const { platform, accessory, onChar, switchService } = createPlatform()
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockImplementation(
-        (_source: string, _zone: number, options?: { onWaiting?: () => void }) => {
-          options?.onWaiting?.()
-          return Promise.reject(new Error('source set rejected: invalid command in current state'))
-        },
+      setSource: jest.fn().mockRejectedValue(
+        new ProtocolError('source set rejected: invalid command in current state', {
+          answerCode: ANSWER_INVALID_STATE,
+        }),
       ),
+      setSourceWhenReady: jest.fn().mockResolvedValue(undefined),
     })
 
     new SourcePresetAccessory(platform, accessory, client)
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
 
-    await expect(setHandler(true)).rejects.toBeInstanceOf(FakeHapStatusError)
+    // HAP abandons a write after ~9s, so the wake retry has to be handed off.
+    await expect(setHandler(true)).resolves.toBeUndefined()
     expect(platform.log.info).toHaveBeenCalledWith(
-      'XR-8S CD: device is not ready (check power); retrying for up to 60s',
+      'XR-8S CD: receiver is not ready (check power); '
+      + 'retrying in the background for up to 60s',
     )
-    expect(platform.log.error).toHaveBeenCalledWith(
-      'XR-8S CD: set failed: source set rejected: invalid command in current state',
-    )
+    expect(client.setSourceWhenReady).toHaveBeenCalledWith('cd', 1)
+
+    await flushDeferredUpdates()
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S CD: SET CD')
+    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
   })
 
   it('requires source in context', () => {
@@ -293,13 +347,17 @@ describe('SourcePresetAccessory', () => {
     )
   })
 
-  it('returns the cached On value from get', () => {
+  it('reports No Response until real state has been observed', async () => {
     const { platform, accessory, onChar } = createPlatform()
-    const client = mockClient()
+    const client = mockClient({ getSource: jest.fn().mockResolvedValue('cd') })
 
-    new SourcePresetAccessory(platform, accessory, client)
+    const handler = new SourcePresetAccessory(platform, accessory, client)
     const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
-    expect(getHandler()).toBe(false)
+
+    expect(() => getHandler()).toThrow(FakeHapStatusError)
+
+    await handler.refresh()
+    expect(getHandler()).toBe(true)
   })
 
   it('single-flights concurrent refresh calls', async () => {
@@ -343,7 +401,7 @@ describe('SourcePresetAccessory', () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     let resolvePoll: ((value: string) => void) | undefined
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockResolvedValue(undefined),
+      setSource: jest.fn().mockResolvedValue(undefined),
       getSource: jest.fn().mockImplementation(() => new Promise<string>((resolve) => {
         resolvePoll = resolve
       })),
@@ -365,7 +423,7 @@ describe('SourcePresetAccessory', () => {
     const { platform, accessory, onChar } = createPlatform()
     let resolveSet: (() => void) | undefined
     const client = mockClient({
-      setSourceWhenReady: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+      setSource: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
         resolveSet = resolve
       })),
       getSource: jest.fn().mockResolvedValue('bd'),

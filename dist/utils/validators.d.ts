@@ -19,10 +19,29 @@ export interface ConfigValidationResult {
     warnings: string[];
 }
 /**
- * True when `value` looks like a usable hostname or IPv4/IPv6 address.
+ * Raised when accessory resolution fails. Keeps the individual messages so a
+ * caller can report them separately instead of parsing one joined string.
+ */
+export declare class ConfigValidationError extends Error {
+    readonly errors: readonly string[];
+    constructor(errors: readonly string[]);
+}
+/**
+ * Render an untrusted config value safe for a single log line.
  *
- * Rejects `host:port` forms (except bracketed IPv6) so a combined target cannot
- * silently fail later in `net.createConnection`.
+ * Config comes from `config.json`, which other plugins and UI users can write.
+ * Interpolating it raw lets an embedded newline forge log lines attributed to
+ * other components.
+ */
+export declare function forLog(value: unknown): string;
+/**
+ * True when `value` is a usable IPv4/IPv6 address or DNS hostname.
+ *
+ * An allowlist rather than a denylist: only forms `net.createConnection` can
+ * actually reach are accepted, so a malformed target fails at startup with a
+ * clear message instead of as a DNS error on every poll. `host:port` is
+ * rejected (use the `port` option); bracketed IPv6 (`[::1]`) is accepted and
+ * unwrapped by the client before connecting.
  */
 export declare function isValidHost(value: string): boolean;
 /** Stable identity key used for duplicate detection and UUID generation. */
@@ -38,14 +57,14 @@ export declare function validateConfig(config: ConcertPlatformConfig | undefined
 /**
  * Resolve and validate accessories after `validateConfig` has reported no errors.
  *
- * Zone defaults to 1 when omitted or invalid (invalid zone already fatal when
- * validating entries that set an explicit bad zone).
+ * Zone defaults to 1 when omitted. An explicit zone other than 1 or 2 is fatal
+ * and throws rather than being silently defaulted.
+ *
+ * @throws {ConfigValidationError} when any entry fails to resolve
  */
 export declare function resolveAccessories(config: ConcertPlatformConfig): ResolvedAccessory[];
 /** Resolve a usable TCP port, falling back to the AudioControl default. */
 export declare function resolvePort(port: number | undefined): number;
-/** Resolve a usable zone number (1 or 2). */
-export declare function resolveZone(zone: number | undefined): number;
 /**
  * Resolve a usable refresh interval in seconds.
  *

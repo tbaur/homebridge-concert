@@ -10,16 +10,18 @@ Releases are fully automated with [release-please](https://github.com/googleapis
    | PR title prefix | Example | Version bump |
    |---|---|---|
    | `fix:` | `fix: handle timeout during power poll` | patch (0.1.0 → 0.1.1) |
-   | `feat:` | `feat: add volume control` | minor (0.1.0 → 0.2.0) |
-   | `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer | `feat!: drop Node 20` | major (0.1.0 → 1.0.0) |
+   | `feat:` | `feat: add volume control` | patch while pre-1.0 (0.1.0 → 0.1.1); minor once 1.x (1.0.0 → 1.1.0) |
+   | `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer | `feat!: drop Node 20` | minor while pre-1.0 (0.1.0 → 0.2.0); major once 1.x (1.0.0 → 2.0.0) |
    | `chore:`, `docs:`, `refactor:`, `test:`, `ci:` | `docs: fix typo` | no release |
 
-3. The **Tests** workflow runs on the PR (matrix: Node 20, 22, 24, plus a security audit). The PR is squash-merged to `main`.
+   Pre-1.0 bumps are damped by `bump-minor-pre-major` and `bump-patch-for-minor-pre-major` in `release-please-config.json`; the parenthesized 1.x behavior applies automatically once the first 1.0.0 is cut.
+
+3. The **Tests** workflow runs on the PR (matrix: Node 20, 22, 24, plus a Homebridge 1.6 floor job and an `npm audit` security job), alongside the **OSV-Scanner** workflow's PR scan. The PR is squash-merged to `main`.
 4. **release-please** opens or updates a **Release PR** titled `chore(main): release X.Y.Z`. It carries the version bump in `package.json` and the generated `CHANGELOG.md` entries. Multiple code PRs merged before a release are batched into one Release PR.
 5. Merging the Release PR triggers the `release.yml` workflow, which:
    - creates the `vX.Y.Z` git tag,
    - publishes a GitHub Release with the changelog notes,
-   - runs the `publish` job (build → lint → test → `npm publish` with provenance) on Node 24.
+   - runs the `publish` job (install with `--ignore-scripts` → build → lint → test → `npm publish --dry-run` → `npm publish` with provenance and `--access public`) on Node 24.
 
 A release therefore reduces to: merge the code PR(s), then merge the Release PR.
 

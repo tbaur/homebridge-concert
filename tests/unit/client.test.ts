@@ -16,21 +16,25 @@ import {
   COMMAND_RC5,
   COMMAND_SOURCE,
   COMMAND_VOLUME,
+  FRAME_START,
   POWER_ON,
   RC5_POWER_OFF,
   RC5_POWER_ON,
   RC5_SYSTEM_ZONE1,
   buildPowerOn,
+  resolveSourceDefinition,
 } from '../../src/api/protocol'
 import {
+  DEFAULT_CONTROL_PORT,
   MAX_RESPONSE_BUFFER_BYTES,
-  POWER_QUERY_RETRY_MS,
-  SOURCE_READY_NOT_READY_LOG_AFTER_MS,
-  SOURCE_READY_RETRY_INTERVAL_MS,
-  SOURCE_READY_TIMEOUT_MS,
-  VOLUME_READY_NOT_READY_LOG_AFTER_MS,
-  VOLUME_READY_RETRY_INTERVAL_MS,
-  VOLUME_READY_TIMEOUT_MS,
+  POWER_STATE_TTL_MS,
+  QUERY_BREAKER_FAILURE_THRESHOLD,
+  SET_SETTLE_MS,
+  SET_VERIFY_ATTEMPTS,
+  STATE_QUERY_RETRIES,
+  STATE_QUERY_RETRY_MS,
+  WAKE_RETRY_INTERVAL_MS,
+  WAKE_RETRY_TIMEOUT_MS,
 } from '../../src/settings'
 
 class FakeSocket extends EventEmitter {
@@ -47,10 +51,16 @@ class FakeSocket extends EventEmitter {
     this.destroyed = true
     this.emit('close')
   }
+}
 
-  removeAllListeners(event?: string | symbol): this {
-    super.removeAllListeners(event)
-    return this
+/**
+ * Let fake time pass in small steps so the microtask chains between a timeout,
+ * its retry, and the next socket all get a chance to run. Advancing the whole
+ * span in one call can fire a later timer before an earlier chain has settled.
+ */
+async function advanceInSteps(totalMs: number, stepMs = 50): Promise<void> {
+  for (let elapsed = 0; elapsed < totalMs; elapsed += stepMs) {
+    await jest.advanceTimersByTimeAsync(stepMs)
   }
 }
 
@@ -189,6 +199,414 @@ describe('ConcertClient', () => {
     await expect(client.getPowerState()).rejects.toBeInstanceOf(ConnectionError)
   })
 
+  it('absorbs a late socket error after the request has settled', async () => {
+    const socket = new FakeSocket()
+    const createConnection = jest.fn(() => {
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = client.getPowerState()
+    await new Promise((resolve) => setImmediate(resolve))
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+    await expect(pending).resolves.toBe(true)
+
+    // Node rethrows an 'error' event that nothing is listening for, which would
+    // take down the Homebridge process.
+    expect(() => socket.emit('error', new Error('late ECONNRESET'))).not.toThrow()
+  })
+
+  it('wraps a synchronous createConnection failure in ConnectionError', async () => {
+    const createConnection = jest.fn(() => {
+      throw new TypeError('invalid connect options')
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.getPowerState()).rejects.toBeInstanceOf(ConnectionError)
+    expect(createConnection).toHaveBeenCalledTimes(1 + STATE_QUERY_RETRIES)
+  })
+
+  it('unwraps a bracketed IPv6 host before connecting', async () => {
+    const socket = new FakeSocket()
+    const createConnection = jest.fn(() => {
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '[fe80::1]',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = client.getPowerState()
+    await new Promise((resolve) => setImmediate(resolve))
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+
+    await expect(pending).resolves.toBe(true)
+    // net resolves `host` through dns.lookup, which never strips brackets.
+    expect(createConnection).toHaveBeenCalledWith({ host: 'fe80::1', port: DEFAULT_CONTROL_PORT })
+  })
+
+  it('stops dialing an unreachable receiver after repeated query failures', async () => {
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => socket.emit('error', new Error('ECONNREFUSED')))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    for (let attempt = 0; attempt < QUERY_BREAKER_FAILURE_THRESHOLD; attempt++) {
+      await expect(client.getPowerState()).rejects.toBeInstanceOf(ConnectionError)
+    }
+    const dialsBeforeBreaker = createConnection.mock.calls.length
+
+    // The breaker is now open: further polls fail fast without touching the network.
+    await expect(client.getPowerState()).rejects.toThrow(/pausing polls/)
+    expect(createConnection).toHaveBeenCalledTimes(dialsBeforeBreaker)
+  })
+
+  it('still allows sets while the breaker is open, and resumes polling after one works', async () => {
+    let unreachable = true
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      if (unreachable) {
+        queueMicrotask(() => socket.emit('error', new Error('ECONNREFUSED')))
+        return socket as unknown as net.Socket
+      }
+      queueMicrotask(() => {
+        socket.emit('connect')
+        // A Power status frame satisfies both an RC5 set and a power query.
+        queueMicrotask(() => {
+          socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+        })
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    for (let attempt = 0; attempt < QUERY_BREAKER_FAILURE_THRESHOLD; attempt++) {
+      await expect(client.getPowerState()).rejects.toBeInstanceOf(ConnectionError)
+    }
+    await expect(client.getPowerState()).rejects.toThrow(/pausing polls/)
+
+    // A HomeKit action is deliberate and must never be refused by the breaker.
+    unreachable = false
+    await expect(client.setPower(true)).resolves.toBeUndefined()
+
+    // Proof of reachability reopens the poll path.
+    await expect(client.getPowerState()).resolves.toBe(true)
+  })
+
+  it('fails in-flight and subsequent requests once closed', async () => {
+    const socket = new FakeSocket()
+    const createConnection = jest.fn(() => {
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = expect(client.getPowerState()).rejects.toThrow(/closed/)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // Shutdown must not leave HomeKit waiting out the full request timeout.
+    client.close()
+    await pending
+    expect(socket.destroyed).toBe(true)
+
+    await expect(client.getPowerState()).rejects.toThrow(/closed/)
+  })
+
+  it('bounds a set and its verification by the caller timeout', async () => {
+    jest.useFakeTimers()
+    // Never answers: every attempt can only end in a timeout.
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      requestTimeoutMs: 5_000,
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const started = Date.now()
+    let settledAt = 0
+    const pending = client.setVolume(57, 1, { timeoutMs: 1_000 })
+      .catch((error: unknown) => {
+        settledAt = Date.now()
+        return error
+      })
+    await advanceInSteps(4_000, 100)
+
+    expect(await pending).toBeInstanceOf(ConnectionError)
+    // Unbounded, the 5s request plus two verification rounds would take ~29s.
+    expect(settledAt - started).toBeLessThan(2_000)
+  })
+
+  it('does not accept a power-on confirmed by a standby status frame', async () => {
+    jest.useFakeTimers()
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => {
+        socket.emit('connect')
+        queueMicrotask(() => {
+          // Answer code OK, but the payload says the zone is still in standby.
+          socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, 0x00, 0x0d]))
+        })
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      requestTimeoutMs: 100,
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    // Treating that as success would cache the inverse of reality, which then
+    // drives the presets' standby handling.
+    const pending = expect(client.setPower(true, 1, { timeoutMs: 400 }))
+      .rejects.toBeInstanceOf(ConnectionError)
+    await advanceInSteps(1_200, 50)
+    await pending
+    expect(client.getLastPowerState(1)).not.toBe(true)
+  })
+
+  it('accepts a power-on confirmed by an agreeing status frame', async () => {
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => {
+        socket.emit('connect')
+        queueMicrotask(() => {
+          socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+        })
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.setPower(true, 1)).resolves.toBeUndefined()
+    expect(client.getLastPowerState(1)).toBe(true)
+  })
+
+  it('expires a cached power state so an absent receiver cannot look confirmed', async () => {
+    const socket = new FakeSocket()
+    const createConnection = jest.fn(() => {
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = client.getPowerState(1)
+    await new Promise((resolve) => setImmediate(resolve))
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, 0x00, 0x0d]))
+    await expect(pending).resolves.toBe(false)
+    expect(client.getLastPowerState(1)).toBe(false)
+
+    // Without expiry, a preset that skips its own query while the zone is in
+    // standby would keep re-confirming Off forever once the unit went away.
+    jest.spyOn(Date, 'now').mockReturnValue(Date.now() + POWER_STATE_TTL_MS + 1)
+    expect(client.getLastPowerState(1)).toBeUndefined()
+  })
+
+  it('rejects an out-of-range zone rather than silently using zone 1', async () => {
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: jest.fn() as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.getPowerState(3)).rejects.toBeInstanceOf(RangeError)
+  })
+
+  it('does not spend the wake window re-dialing a host that is not there', async () => {
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: jest.fn() as unknown as typeof net.createConnection,
+    })
+    const refused = new ConnectionError('Connection to 192.168.1.50:50000 failed', {
+      cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+    })
+    const setVolume = jest.spyOn(client, 'setVolume').mockRejectedValue(refused)
+
+    // A refused connection is not a waking receiver; looping for 60s is pointless.
+    await expect(client.setVolumeWhenReady(57, 1)).rejects.toBeInstanceOf(ConnectionError)
+    expect(setVolume).toHaveBeenCalledTimes(1)
+  })
+
+  it('truncates a large partial response in the timeout message', async () => {
+    jest.useFakeTimers()
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => {
+        socket.emit('connect')
+        // Start bytes with no valid frame behind them: retained as a possible
+        // partial frame, unparseable, and previously pasted in whole.
+        queueMicrotask(() => socket.emit('data', Buffer.alloc(2_000, FRAME_START)))
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      requestTimeoutMs: 100,
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const pending = client.getPowerState(1).catch((error: unknown) => error)
+    await advanceInSteps(1_500, 50)
+
+    const error = await pending
+    const message = error instanceof Error ? error.message : String(error)
+    // This text is logged at warn level; a 4 KB buffer must not become a 12 KB line.
+    expect(message).toContain('more bytes')
+    expect(message.length).toBeLessThan(300)
+  })
+
+  it('rejects when the socket closes before a response arrives', async () => {
+    const socket = new FakeSocket()
+    const createConnection = jest.fn(() => {
+      queueMicrotask(() => {
+        socket.emit('connect')
+        queueMicrotask(() => socket.emit('close'))
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.getPowerState()).rejects.toThrow(/closed before a response arrived/)
+  })
+
+  it('rejects when the socket write fails', async () => {
+    class FailingWriteSocket extends FakeSocket {
+      override write(_data: Buffer, callback?: (error?: Error | null) => void): boolean {
+        callback?.(new Error('EPIPE'))
+        return false
+      }
+    }
+
+    const createConnection = jest.fn(() => {
+      const socket = new FailingWriteSocket()
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.getPowerState()).rejects.toThrow(/Failed to write to .*EPIPE/)
+  })
+
+  it('rejects a zone 1 source that reports Follow Zone 1', async () => {
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => {
+        socket.emit('connect')
+        queueMicrotask(() => {
+          // 0x00 means "follow zone 1", which zone 1 itself cannot be.
+          socket.emit('data', Buffer.from([0x21, 0x01, COMMAND_SOURCE, ANSWER_OK, 0x01, 0x00, 0x0d]))
+        })
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.getSource(1)).rejects.toThrow(/unexpected for zone 1/)
+  })
+
+  it('rejects when zone 2 follows a zone 1 that also reports Follow Zone 1', async () => {
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => {
+        socket.emit('connect')
+        queueMicrotask(() => {
+          const zone = socket.written[0]?.[1] ?? 0x02
+          socket.emit('data', Buffer.from([0x21, zone, COMMAND_SOURCE, ANSWER_OK, 0x01, 0x00, 0x0d]))
+        })
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.getSource(2)).rejects.toThrow(/Zone 1 source is Follow Zone 1/)
+  })
+
+  it('accepts a SourceDefinition object as well as an id', async () => {
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => {
+        socket.emit('connect')
+        queueMicrotask(() => {
+          socket.emit('data', Buffer.from([
+            0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, 0x76, 0x0d,
+          ]))
+        })
+      })
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const cd = resolveSourceDefinition('cd')!
+    await expect(client.setSource(cd, 1)).resolves.toBeUndefined()
+  })
+
+  it('rejects an unknown source name', async () => {
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: jest.fn() as unknown as typeof net.createConnection,
+    })
+
+    await expect(client.setSource('NOPE', 1)).rejects.toBeInstanceOf(RangeError)
+  })
+
   it('times out if connect never completes (and retry)', async () => {
     jest.useFakeTimers()
     const createConnection = jest.fn(() => new FakeSocket() as unknown as net.Socket)
@@ -203,7 +621,7 @@ describe('ConcertClient', () => {
     // unhandled rejection during advanceTimersByTimeAsync.
     const pending = expect(client.getPowerState()).rejects.toThrow(/Timed out connecting/)
     await jest.advanceTimersByTimeAsync(100) // first attempt
-    await jest.advanceTimersByTimeAsync(POWER_QUERY_RETRY_MS)
+    await jest.advanceTimersByTimeAsync(STATE_QUERY_RETRY_MS)
     await jest.advanceTimersByTimeAsync(100) // retry attempt
     await pending
     expect(createConnection).toHaveBeenCalledTimes(2)
@@ -224,11 +642,13 @@ describe('ConcertClient', () => {
     })
 
     const pending = expect(client.getPowerState()).rejects.toThrow(
-      'Timed out waiting for response',
+      // The message must name the receiver and zone: it is the failure an
+      // operator sees most, and a bare "timed out" is not actionable.
+      'Timed out waiting for a response from 192.168.1.50:50000 zone 1',
     )
     await Promise.resolve()
     await jest.advanceTimersByTimeAsync(100) // first attempt timeout
-    await jest.advanceTimersByTimeAsync(POWER_QUERY_RETRY_MS) // retry delay
+    await jest.advanceTimersByTimeAsync(STATE_QUERY_RETRY_MS) // retry delay
     await jest.advanceTimersByTimeAsync(100) // second attempt timeout
     await pending
     expect(createConnection).toHaveBeenCalledTimes(2)
@@ -260,7 +680,7 @@ describe('ConcertClient', () => {
     const pending = client.getPowerState()
     await Promise.resolve()
     await jest.advanceTimersByTimeAsync(100) // first attempt timeout
-    await jest.advanceTimersByTimeAsync(POWER_QUERY_RETRY_MS)
+    await jest.advanceTimersByTimeAsync(STATE_QUERY_RETRY_MS)
     await expect(pending).resolves.toBe(true)
     expect(createConnection).toHaveBeenCalledTimes(2)
   })
@@ -408,13 +828,13 @@ describe('ConcertClient', () => {
       createConnection: createConnection as unknown as typeof net.createConnection,
     })
 
-    const pending = client.setPower(false)
-    await Promise.resolve()
-    await jest.advanceTimersByTimeAsync(100) // set timeout → verify path
-    await jest.advanceTimersByTimeAsync(1_500) // settle + first disagreeing query
-    await jest.advanceTimersByTimeAsync(1_500) // settle + second disagreeing query
-    await expect(pending).rejects.toBeInstanceOf(ConnectionError)
-    expect(createConnection).toHaveBeenCalledTimes(3)
+    // Attach the rejection handler before advancing so Jest does not observe a
+    // momentarily unhandled rejection.
+    const pending = expect(client.setPower(false)).rejects.toBeInstanceOf(ConnectionError)
+    await advanceInSteps(100 + SET_SETTLE_MS * SET_VERIFY_ATTEMPTS)
+    await pending
+    // One set attempt, then one query per verification attempt.
+    expect(createConnection).toHaveBeenCalledTimes(1 + SET_VERIFY_ATTEMPTS)
   })
 
   it('queries and sets volume over short-lived TCP connections', async () => {
@@ -513,42 +933,12 @@ describe('ConcertClient', () => {
       }))
       .mockResolvedValueOnce(undefined)
 
-    const onWaiting = jest.fn()
-    const pending = client.setVolumeWhenReady(57, 1, { onWaiting })
+    const pending = client.setVolumeWhenReady(57, 1)
     await Promise.resolve()
-    await jest.advanceTimersByTimeAsync(VOLUME_READY_RETRY_INTERVAL_MS)
+    await jest.advanceTimersByTimeAsync(WAKE_RETRY_INTERVAL_MS)
     await expect(pending).resolves.toBeUndefined()
     expect(setVolume).toHaveBeenCalledTimes(2)
-    // Normal ~20s wake finishes before the not-ready info threshold.
-    expect(onWaiting).not.toHaveBeenCalled()
     expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('receiver ready'))
-  })
-
-  it('setVolumeWhenReady notifies onWaiting only after the not-ready log delay', async () => {
-    jest.useFakeTimers()
-    const client = new ConcertClient({
-      host: '192.168.1.50',
-      createConnection: jest.fn() as unknown as typeof net.createConnection,
-    })
-    const notReady = new ProtocolError(
-      'volume set rejected: invalid command in current state',
-      { answerCode: ANSWER_INVALID_STATE },
-    )
-    const setVolume = jest.spyOn(client, 'setVolume').mockRejectedValue(notReady)
-
-    const onWaiting = jest.fn()
-    const pending = client.setVolumeWhenReady(57, 1, { onWaiting })
-    await Promise.resolve()
-    await jest.advanceTimersByTimeAsync(VOLUME_READY_NOT_READY_LOG_AFTER_MS - 1)
-    expect(onWaiting).not.toHaveBeenCalled()
-
-    // Cross the log threshold while still failing, then succeed on the next try.
-    await jest.advanceTimersByTimeAsync(VOLUME_READY_RETRY_INTERVAL_MS)
-    expect(onWaiting).toHaveBeenCalledTimes(1)
-
-    setVolume.mockResolvedValueOnce(undefined)
-    await jest.advanceTimersByTimeAsync(VOLUME_READY_RETRY_INTERVAL_MS)
-    await expect(pending).resolves.toBeUndefined()
   })
 
   it('setVolumeWhenReady does not retry permanent protocol errors', async () => {
@@ -578,9 +968,12 @@ describe('ConcertClient', () => {
 
     const pending = client.setVolumeWhenReady(57, 1)
     const expectation = expect(pending).rejects.toBeInstanceOf(ProtocolError)
-    await jest.advanceTimersByTimeAsync(VOLUME_READY_TIMEOUT_MS + VOLUME_READY_RETRY_INTERVAL_MS)
+    await jest.advanceTimersByTimeAsync(WAKE_RETRY_TIMEOUT_MS + WAKE_RETRY_INTERVAL_MS)
     await expectation
-    expect(setVolume.mock.calls.length).toBeGreaterThan(1)
+    // The loop must actually fill the window rather than giving up after a
+    // couple of tries; allow slack for the attempt that straddles the deadline.
+    const expectedAttempts = WAKE_RETRY_TIMEOUT_MS / WAKE_RETRY_INTERVAL_MS
+    expect(setVolume.mock.calls.length).toBeGreaterThanOrEqual(expectedAttempts - 1)
   })
 
   it('setSourceWhenReady retries after invalid-state then succeeds', async () => {
@@ -597,40 +990,12 @@ describe('ConcertClient', () => {
       }))
       .mockResolvedValueOnce(undefined)
 
-    const onWaiting = jest.fn()
-    const pending = client.setSourceWhenReady('CD', 1, { onWaiting })
+    const pending = client.setSourceWhenReady('CD', 1)
     await Promise.resolve()
-    await jest.advanceTimersByTimeAsync(SOURCE_READY_RETRY_INTERVAL_MS)
+    await jest.advanceTimersByTimeAsync(WAKE_RETRY_INTERVAL_MS)
     await expect(pending).resolves.toBeUndefined()
     expect(setSource).toHaveBeenCalledTimes(2)
-    expect(onWaiting).not.toHaveBeenCalled()
     expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('receiver ready'))
-  })
-
-  it('setSourceWhenReady notifies onWaiting only after the not-ready log delay', async () => {
-    jest.useFakeTimers()
-    const client = new ConcertClient({
-      host: '192.168.1.50',
-      createConnection: jest.fn() as unknown as typeof net.createConnection,
-    })
-    const notReady = new ProtocolError(
-      'source set rejected: invalid command in current state',
-      { answerCode: ANSWER_INVALID_STATE },
-    )
-    const setSource = jest.spyOn(client, 'setSource').mockRejectedValue(notReady)
-
-    const onWaiting = jest.fn()
-    const pending = client.setSourceWhenReady('CD', 1, { onWaiting })
-    await Promise.resolve()
-    await jest.advanceTimersByTimeAsync(SOURCE_READY_NOT_READY_LOG_AFTER_MS - 1)
-    expect(onWaiting).not.toHaveBeenCalled()
-
-    await jest.advanceTimersByTimeAsync(SOURCE_READY_RETRY_INTERVAL_MS)
-    expect(onWaiting).toHaveBeenCalledTimes(1)
-
-    setSource.mockResolvedValueOnce(undefined)
-    await jest.advanceTimersByTimeAsync(SOURCE_READY_RETRY_INTERVAL_MS)
-    await expect(pending).resolves.toBeUndefined()
   })
 
   it('setSourceWhenReady does not retry permanent protocol errors', async () => {
@@ -660,9 +1025,10 @@ describe('ConcertClient', () => {
 
     const pending = client.setSourceWhenReady('CD', 1)
     const expectation = expect(pending).rejects.toBeInstanceOf(ProtocolError)
-    await jest.advanceTimersByTimeAsync(SOURCE_READY_TIMEOUT_MS + SOURCE_READY_RETRY_INTERVAL_MS)
+    await jest.advanceTimersByTimeAsync(WAKE_RETRY_TIMEOUT_MS + WAKE_RETRY_INTERVAL_MS)
     await expectation
-    expect(setSource.mock.calls.length).toBeGreaterThan(1)
+    const expectedAttempts = WAKE_RETRY_TIMEOUT_MS / WAKE_RETRY_INTERVAL_MS
+    expect(setSource.mock.calls.length).toBeGreaterThanOrEqual(expectedAttempts - 1)
   })
 
   it('succeeds when source-set times out but a later query confirms the input', async () => {

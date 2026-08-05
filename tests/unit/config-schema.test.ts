@@ -54,6 +54,14 @@ describe('config.schema.json', () => {
     expect(keys).not.toContain('name')
   })
 
+  it('bounds volume so the UI cannot save a config the plugin rejects', () => {
+    // An out-of-range volume is a fatal validation error, unlike port and
+    // refreshRate which only warn and fall back.
+    const volume = schema.schema.properties.accessories.items.properties.volume
+    expect(volume.minimum).toBe(0)
+    expect(volume.maximum).toBe(99)
+  })
+
   it('uses editable integer fields (no min/max sliders) for port and refreshRate', () => {
     const port = schema.schema.properties.port as { minimum?: number; maximum?: number }
     const refreshRate = schema.schema.properties.options.properties.refreshRate as {
@@ -73,7 +81,6 @@ describe('config.schema.json', () => {
 
   it('package name matches PLUGIN_NAME', () => {
     // Keep the published package name and registerPlatform name in lockstep.
-     
     const pkg = require('../../package.json') as { name: string }
     expect(pkg.name).toBe(PLUGIN_NAME)
   })

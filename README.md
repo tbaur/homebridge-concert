@@ -17,22 +17,27 @@ Control your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple HomeKit 
 - **Source / input preset Switch** — On when the zone is on a configured input (e.g. CD); set On selects it; set Off is a no-op
 - **Multi-accessory** — As many switches as you need on one receiver
 - **Zone targeting** — Zone 1 (main) or Zone 2 per accessory
-- **Accessory Information** — Manufacturer, model, and serial from config
+- **Accessory Information** — Manufacturer (AudioControl), model from config, the plugin version as firmware revision, and a stable auto-generated serial number
 
 ### Reliability
 - **LAN IP control** — TCP port `50000`, AudioControl X/XR automation protocol
-- **State polling** — Configurable interval (default 90s, 5s–86400s); power before volume/source; overlapping ticks coalesce; volume/source polls skip in standby
+- **State polling** — Configurable interval (default 90s; below 5s falls back to 90s, above 86400s is clamped); power before volume/source; presets polled together so same-zone queries share one request; overlapping ticks coalesce; volume/source polls skip in standby
 - **Serialized TCP** — One in-flight command at a time (short-lived sockets)
-- **Bounded timeouts** — Connect/request timeouts; capped response buffers
-- **Resilient polling** — One retry on silent power queries; failures keep last known On; first warn, then debug until recovery
-- **Wake-aware volume / source set** — Retries every 2s for up to 60s on not-ready errors so Shortcuts need no fixed Wait; “not ready” log deferred 30s
-- **Startup validation** — Bad host/accessories is fatal (clears cached accessories); bad port/refreshRate warn and fall back/clamp
+- **Bounded timeouts** — Connect/request timeouts; capped response buffers; every set bounded end to end, including post-ack verification
+- **Answers HomeKit promptly** — A set replies inside HomeKit's ~9s write window and finishes a slow wake in the background, pushing the real value when it lands
+- **Resilient polling** — One retry on silent power/volume/source queries; failures keep last known On; first warn, then debug until recovery
+- **Backs off when unreachable** — After repeated failures, polling pauses instead of dialing an absent receiver every tick; HomeKit-initiated sets always still try
+- **Wake-aware volume / source set** — Retries every 2s for up to 60s on not-ready errors so Shortcuts need no fixed Wait. HomeKit is answered immediately and the switch updates when the receiver accepts the command
+- **Honest state** — A switch reports “No Response” until the receiver has actually been read, and again after repeated poll failures, rather than asserting a value it cannot confirm
+- **Presets follow the receiver** — Volume/source presets report Off in standby; a successful set immediately re-reads the other switches so two levels or inputs are never both On
+- **Startup validation** — Bad host/accessories is fatal; existing switches stay registered and report “No Response” so HomeKit keeps your rooms, scenes, and automations. Bad port/refreshRate warn and fall back/clamp
 
 ### Quality
 - **Strict TypeScript** — `strict` mode
 - **Tested** — Jest with ≥80% coverage gate
-- **CI** — Build, lint, test on Node 20/22/24; dependency audit
+- **CI** — Build, lint (warnings are failures), type-check, test on Node 20/22/24; a job against the oldest supported Homebridge; dependency audit and OSV scanning
 - **No Analytics** — Zero tracking or data collection
+
 ## Quick Start
 
 ### 1. Install
@@ -109,6 +114,8 @@ Shutdown: turn **XR-8S Power** Off (standby).
 ### Example logs
 
 ```text
+[Concert] Initializing Concert platform
+[Concert] homebridge-concert v0.1.11 → 192.168.1.50:50000 (AudioControl Concert XR-8S)
 [Concert] Registering accessory "XR-8S Power" (z1:power) at 192.168.1.50:50000
 [Concert] Registering accessory "XR-8S Volume" (z1:vol:57) at 192.168.1.50:50000
 [Concert] Registering accessory "XR-8S Source" (z1:src:cd) at 192.168.1.50:50000
@@ -136,16 +143,20 @@ External change (remote / front panel):
 |------|-------------|
 | **AudioControl Concert XR** | XR-series with IP automation on TCP 50000 (tested: XR-8S) |
 
+Power control is verified against Concert hardware. Volume and source control use command codes documented for the wider AudioControl/Arcam X/XR family; they are implemented and exercised in tests, but only the power path has been confirmed on-unit. See [Protocol reference](https://github.com/tbaur/homebridge-concert/blob/main/docs/PROTOCOL.md) for the per-command provenance.
+
 ## Configuration Options
+
+Only one `Concert` platform block is supported (`singular` in the Homebridge UI schema), so one receiver per Homebridge instance.
 
 | Option | Required | Description |
 |--------|:--------:|-------------|
-| `name` | ✓ | Plugin instance name in the Homebridge log |
+| `name` | ✓ (UI) | Plugin instance name in the Homebridge log. Required by the Homebridge UI form; a hand-edited `config.json` that omits it falls back to `Concert` |
 | `host` | ✓ | IP or hostname of the receiver |
 | `accessories` | ✓ | Non-empty list of HomeKit switches |
 | `port` | | TCP control port (default: 50000) |
 | `model` | | Accessory Information model (default: `AudioControl Concert XR-8S`) |
-| `options.refreshRate` | | Poll interval seconds (default: 90, min: 5, max: 86400) |
+| `options.refreshRate` | | Poll interval seconds (default: 90; below 5 falls back to 90, above 86400 is clamped) |
 
 ### `accessories[]` entries
 
@@ -155,18 +166,27 @@ External change (remote / front panel):
 | `name` | ✓ | HomeKit display name |
 | `zone` | | `1` (main, default) or `2` |
 | `volume` | for `volumePreset` | Absolute level `0`–`99` |
-| `source` | for `sourcePreset` | `CD`, `BD`, `AV`, `SAT`, `PVR`, `UHD`, `AUX`, `DISPLAY`, `FM`, `DAB`, `NET`, `STB`, `GAME`, `BT` |
+| `source` | for `sourcePreset` | `CD`, `BD`, `AV`, `SAT`, `PVR`, `UHD`, `AUX`, `DISPLAY`, `FM`, `DAB`, `NET`, `STB`, `GAME`, `BT` (case-insensitive; the Homebridge UI offers the uppercase form) |
 
-Duplicate identity (same type + zone + volume/source) is rejected at startup. `DISPLAY` is Zone 1 only.
+Duplicate identity (same type + zone + volume/source) is rejected at startup. `DISPLAY` is Zone 1 only. Zone 2 can also report “follow Zone 1”, in which case the plugin resolves the effective input from Zone 1 automatically.
+
+An accessory's identity is its type + zone + volume/source — deliberately *not* the receiver's address, so changing `host` or `port` (say, after a DHCP lease moves) keeps your existing switches intact. Upgrading from a version that did include the address is handled for you: existing switches are adopted rather than replaced, so rooms, scenes, and automations survive.
+
+Changing a preset's `volume` or `source` does create a **new** HomeKit accessory and remove the old one, so it loses its room assignment, scenes, and automations. Rename freely — renaming is applied in place — but change preset values only when you are ready to re-add them in the Home app.
+
+Serial numbers shown in Accessory Information are opaque values generated once per accessory and stored in the Homebridge accessory cache. Clearing that cache issues new ones.
 
 ## Not Working?
 
 1. **Control** must be **IP** (not RS232)
 2. **Standby Mode** must be **IP and HDMI ON**
 3. Confirm host/port (`50000`) in the Network menu
-4. Volume/source presets may stay Off in standby — power on first
+4. Volume/source presets report Off while the receiver is in standby — power on first
 5. Match `source` to the front-panel name (e.g. `CD`)
 6. Restart Homebridge after config changes
+7. All switches showing “No Response”? Check the log for `Invalid configuration; plugin will not start until it is corrected.` — the plugin stays inert until the reported problem is fixed, then recovers on the next restart with rooms and automations intact
+8. Switches showing “No Response” right after a restart is normal until the first poll completes — the plugin reports unknown state rather than guessing
+9. Polling goes quiet after repeated failures on purpose: it backs off rather than dialing an absent receiver every tick, and resumes as soon as one query or any HomeKit action succeeds
 
 ## Security
 
@@ -175,7 +195,7 @@ Talks only to the configured LAN IP — no cloud credentials. Anyone who can rea
 ## Requirements
 
 - Homebridge 1.6.0+ or 2.0+
-- Node.js 20+
+- Node.js 20+ (Homebridge 2.x itself requires Node 22+, so the Node 20 floor applies to Homebridge 1.x hosts)
 - An AudioControl Concert XR receiver with IP control enabled
 
 ## More Info

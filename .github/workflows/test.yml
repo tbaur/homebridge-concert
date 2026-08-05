@@ -48,6 +48,9 @@ jobs:
     - name: Run linter
       run: npm run lint
 
+    - name: Type-check tests against production settings
+      run: npx tsc --noEmit -p tsconfig.test.json
+
     - name: Run tests
       run: npm test
       env:
@@ -61,6 +64,25 @@ jobs:
         path: coverage/
         retention-days: 7
 
+  # engines.homebridge claims ^1.6.0 support, but devDependencies pin 2.x. This
+  # job is what makes that claim true rather than aspirational.
+  homebridge-floor:
+    name: Verify oldest supported Homebridge
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      with:
+        node-version: '22.x'
+        cache: 'npm'
+    - run: npm ci
+    - name: Install the oldest supported Homebridge
+      run: npm install --no-save homebridge@1.6.1
+    - name: Type-check against Homebridge 1.6
+      run: npx tsc --noEmit -p tsconfig.test.json
+    - name: Run tests against Homebridge 1.6
+      run: NODE_ENV=test npx jest --coverage=false
+
   security:
     runs-on: ubuntu-latest
     steps:
@@ -70,5 +92,12 @@ jobs:
         node-version: '24.x'
         cache: 'npm'
     - run: npm ci
-    - name: Run npm audit
+    # Gates the release: the plugin ships no runtime dependencies, so this is
+    # expected to be trivially clean and must stay that way.
+    - name: Audit runtime dependencies
       run: npm audit --omit=dev --audit-level=moderate
+    # Dev dependencies are the real surface (and the reason the overrides in
+    # package.json exist), but a transitive advisory there should not block a
+    # release, so this reports without failing.
+    - name: Audit development dependencies
+      run: npm audit --audit-level=high || echo "::warning::Development dependency advisories found; review npm audit output"

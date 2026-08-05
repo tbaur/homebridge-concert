@@ -36,8 +36,6 @@ export interface SourceDefinition {
  * Query codes: 0x1D response Data. RC5: system 16 (Z1) / 23 (Z2).
  */
 export declare const SOURCE_DEFINITIONS: readonly SourceDefinition[];
-/** All accepted `accessories[].source` values (lowercase ids). */
-export declare const SOURCE_IDS: readonly SourceId[];
 /** Labels for Homebridge UI / docs (uppercase front-panel names). */
 export declare const SOURCE_LABELS: readonly string[];
 /**
