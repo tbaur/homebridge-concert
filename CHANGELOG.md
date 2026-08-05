@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [1.0.0](https://github.com/tbaur/homebridge-concert/compare/v0.2.1...v1.0.0) (2026-08-05)
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([a50e219](https://github.com/tbaur/homebridge-concert/commit/a50e2193bb791211b98675bedd9e1ded26dcde92))
+
 ## [0.2.1](https://github.com/tbaur/homebridge-concert/compare/v0.2.0...v0.2.1) (2026-08-05)
 
 
