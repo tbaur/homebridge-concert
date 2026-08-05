@@ -141,8 +141,13 @@ class SwitchAccessory {
         }
     }
     applyObservation({ on, detail }) {
-        if (on !== this.isOn) {
-            const suffix = detail === undefined ? '(external)' : `(${detail}, external)`;
+        if (on !== this.isOn || !this.hasObservedState) {
+            // `(external)` means something else changed it — remote, front panel,
+            // HDMI-CEC. The first read after a restart is discovery, not a change, so
+            // reporting it as external sent operators looking for a cause that was
+            // never there.
+            const cause = this.hasObservedState ? 'external' : 'initial';
+            const suffix = detail === undefined ? `(${cause})` : `(${detail}, ${cause})`;
             this.platform.log.info(`${this.displayName}: ${on ? this.onLabel : this.offLabel} ${suffix}`);
         }
         this.recordState(on);

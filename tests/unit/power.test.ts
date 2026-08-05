@@ -332,17 +332,40 @@ describe('PowerAccessory', () => {
     expect(getHandler()).toBe(true)
   })
 
-  it('logs (external) only for poll-observed changes', async () => {
+  it('distinguishes the first reading from a later external change', async () => {
     const { platform, accessory } = createPlatform()
     const client = {
       setPower: jest.fn(),
-      getPowerState: jest.fn().mockResolvedValue(true),
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false),
+    } as unknown as ConcertClient
+
+    const handler = new PowerAccessory(platform, accessory, client)
+
+    // The first read after a restart is discovery. Calling it "(external)" sent
+    // operators hunting for a change that never happened.
+    await handler.refresh()
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON (initial)')
+    expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S Power: ON (external)')
+
+    // A later change really was made by something else.
+    await handler.refresh()
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: STANDBY (external)')
+  })
+
+  it('reports the initial reading even when it matches the assumed default', async () => {
+    const { platform, accessory } = createPlatform()
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn().mockResolvedValue(false),
     } as unknown as ConcertClient
 
     const handler = new PowerAccessory(platform, accessory, client)
     await handler.refresh()
 
-    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON (external)')
+    // Previously silent, which left the log with no record of the startup state.
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: STANDBY (initial)')
   })
 
   it('reports No Response until real state has been observed', async () => {

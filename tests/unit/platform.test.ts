@@ -604,6 +604,63 @@ describe('ConcertPlatform', () => {
     api.emit('shutdown')
   })
 
+  it('announces an adoption once, not on every restart', () => {
+    const config = validConfig({
+      accessories: [{ type: 'power', name: 'XR-8S Power', zone: 1 }],
+    })
+    const legacyUuid = 'uuid-concert-192.168.1.50:50000:z1:power'
+    // Shared across both launches, exactly as the on-disk cache would be.
+    const context: Record<string, unknown> = { kind: 'power', zone: 1 }
+    const makeCached = () => ({
+      UUID: legacyUuid,
+      displayName: 'XR-8S Power',
+      get context() {
+        return context
+      },
+      set context(next: Record<string, unknown>) {
+        Object.assign(context, next)
+      },
+      getService: jest.fn(() => ({
+        setCharacteristic: jest.fn().mockReturnThis(),
+        getCharacteristic: jest.fn().mockReturnValue({
+          onGet: jest.fn().mockReturnThis(),
+          onSet: jest.fn().mockReturnThis(),
+        }),
+        updateCharacteristic: jest.fn(),
+      })),
+      addService: jest.fn(),
+      on: jest.fn(),
+    } as unknown as PlatformAccessory)
+
+    const firstApi = createMockApi()
+    const firstLog = createLog()
+    const first = new ConcertPlatform(firstLog, config, firstApi)
+    first.configureAccessory(makeCached())
+    firstApi.emit('didFinishLaunching')
+
+    expect(firstLog.info).toHaveBeenCalledWith(
+      expect.stringContaining('registered by an earlier version'),
+    )
+    firstApi.emit('shutdown')
+
+    // A HAP UUID is immutable, so the accessory keeps its legacy UUID and is
+    // re-adopted forever. The notice must not be repeated every launch.
+    const secondApi = createMockApi()
+    const secondLog = createLog()
+    const second = new ConcertPlatform(secondLog, config, secondApi)
+    second.configureAccessory(makeCached())
+    secondApi.emit('didFinishLaunching')
+
+    expect(secondLog.info).not.toHaveBeenCalledWith(
+      expect.stringContaining('Adopting cached accessory'),
+    )
+    expect(secondLog.debug).toHaveBeenCalledWith(
+      expect.stringContaining('identity predates the current scheme'),
+    )
+    expect(secondApi.unregisterPlatformAccessories).not.toHaveBeenCalled()
+    secondApi.emit('shutdown')
+  })
+
   it('adopts each cached accessory at most once', () => {
     const api = createMockApi()
     const log = createLog()

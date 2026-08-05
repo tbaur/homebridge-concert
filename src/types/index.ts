@@ -86,7 +86,12 @@ export interface ResolvedAccessory {
   source?: SourceId
 }
 
-/** Persisted accessory context for a configured receiver switch. */
+/**
+ * Persisted accessory context for a configured receiver switch.
+ *
+ * Written to Homebridge's on-disk accessory cache, so it may be read back by a
+ * different plugin version and must be validated rather than asserted.
+ */
 export interface AccessoryContext {
   kind: AccessoryKind
   host: string
@@ -102,6 +107,15 @@ export interface AccessoryContext {
   volume?: number
   /** Present when `kind` is `sourcePreset`. */
   source?: SourceId
+  /**
+   * True when this accessory's UUID predates the current identity scheme.
+   *
+   * A HAP accessory UUID is immutable, so an adopted accessory keeps its old
+   * address-derived UUID for good and is re-adopted on every launch. This marker
+   * records that the adoption is already known, so it is announced once instead
+   * of on every restart.
+   */
+  adoptedLegacyUuid?: boolean
 }
 
 /**
