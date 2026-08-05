@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.2.0](https://github.com/tbaur/homebridge-concert/compare/v0.1.11...v0.2.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* Config validation is stricter, so a configuration that previously started may now be rejected: `model` must be a string without control characters, and `accessories[].name` is limited to 64 characters. Switch behaviour also changes visibly — volume and source presets now report Off while the zone is in standby, a switch reports "No Response" until its state has been read and again after repeated poll failures, and a set is acknowledged to HomeKit before a slow wake finishes. Existing accessories are adopted across the identity change, so no re-pairing is required.
+
+### Features
+
+* harden state handling, HomeKit write timing, and supply chain ([87b9cbb](https://github.com/tbaur/homebridge-concert/commit/87b9cbb717c5fca60bf35f1414920f903bac2db1))
+
 ## [0.1.11](https://github.com/tbaur/homebridge-concert/compare/v0.1.10...v0.1.11) (2026-08-04)
 
 
