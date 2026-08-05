@@ -143,8 +143,6 @@ External change (remote / front panel):
 |------|-------------|
 | **AudioControl Concert XR** | XR-series with IP automation on TCP 50000 (tested: XR-8S) |
 
-Power control is verified against Concert hardware. Volume and source control use command codes documented for the wider AudioControl/Arcam X/XR family; they are implemented and exercised in tests, but only the power path has been confirmed on-unit. See [Protocol reference](https://github.com/tbaur/homebridge-concert/blob/main/docs/PROTOCOL.md) for the per-command provenance.
-
 ## Configuration Options
 
 Only one `Concert` platform block is supported (`singular` in the Homebridge UI schema), so one receiver per Homebridge instance.
