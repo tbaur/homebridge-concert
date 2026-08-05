@@ -8,6 +8,8 @@
 import type { PlatformAccessory } from 'homebridge'
 
 import { PowerAccessory } from '../../src/devices/power'
+import { ConnectionError } from '../../src/errors'
+import { POLL_FAILURES_BEFORE_UNKNOWN, POWER_SET_TIMEOUT_MS } from '../../src/settings'
 import type { ConcertClient } from '../../src/api'
 import type ConcertPlatform from '../../src/platform'
 
@@ -50,6 +52,7 @@ function createPlatform() {
         HapStatusError: FakeHapStatusError,
       },
     },
+    requestRefresh: jest.fn(),
     log: {
       info: jest.fn(),
       warn: jest.fn(),
@@ -76,15 +79,21 @@ function createPlatform() {
       }
       return undefined
     }),
+    on: jest.fn(),
     addService: jest.fn(),
   } as unknown as PlatformAccessory
 
   return { platform, accessory, switchService, onChar, infoService }
 }
 
+/** The snap-back to HomeKit is deferred a macrotask so HAP cannot clobber it. */
+async function flushDeferredUpdates(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
 describe('PowerAccessory', () => {
   it('sets power on and updates local state', async () => {
-    const { platform, accessory, onChar } = createPlatform()
+    const { platform, accessory, onChar, switchService } = createPlatform()
     const client = {
       setPower: jest.fn().mockResolvedValue(undefined),
       getPowerState: jest.fn(),
@@ -94,8 +103,104 @@ describe('PowerAccessory', () => {
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
     await setHandler(true)
 
-    expect(client.setPower).toHaveBeenCalledWith(true, 1)
+    expect(client.setPower).toHaveBeenCalledWith(true, 1, { timeoutMs: POWER_SET_TIMEOUT_MS })
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON')
+    await flushDeferredUpdates()
+    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
+  })
+
+  it('sets standby and reports it as STANDBY, not OFF', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    const client = {
+      setPower: jest.fn().mockResolvedValue(undefined),
+      getPowerState: jest.fn(),
+    } as unknown as ConcertClient
+
+    new PowerAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    await setHandler(false)
+
+    expect(client.setPower).toHaveBeenCalledWith(false, 1, { timeoutMs: POWER_SET_TIMEOUT_MS })
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: STANDBY')
+  })
+
+  it('reports an externally observed power-off as STANDBY (external)', async () => {
+    const { platform, accessory } = createPlatform()
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false),
+    } as unknown as ConcertClient
+
+    const handler = new PowerAccessory(platform, accessory, client)
+    await handler.refresh()
+    await handler.refresh()
+
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: STANDBY (external)')
+  })
+
+  it('reports No Response again after a sustained failure streak', async () => {
+    const { platform, accessory, onChar } = createPlatform()
+    const reachable = { value: true }
+    const client = {
+      setPower: jest.fn(),
+      getPowerState: jest.fn(() => (reachable.value
+        ? Promise.resolve(true)
+        : Promise.reject(new Error('Timed out connecting')))),
+    } as unknown as ConcertClient
+
+    const handler = new PowerAccessory(platform, accessory, client)
+    const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
+
+    await handler.refresh()
+    expect(getHandler()).toBe(true)
+
+    reachable.value = false
+    for (let i = 0; i < POLL_FAILURES_BEFORE_UNKNOWN - 1; i++) {
+      await handler.refresh()
+      // A short streak keeps the last known value so one timeout cannot make
+      // the switch flicker.
+      expect(getHandler()).toBe(true)
+    }
+
+    await handler.refresh()
+    expect(() => getHandler()).toThrow(FakeHapStatusError)
+    expect(platform.log.warn).toHaveBeenCalledWith(
+      `XR-8S Power: state unknown after ${POLL_FAILURES_BEFORE_UNKNOWN} `
+      + 'failed polls; reporting No Response',
+    )
+
+    // Recovery restores a real value and announces that the streak ended.
+    reachable.value = true
+    await handler.refresh()
+    expect(getHandler()).toBe(true)
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: poll recovered')
+  })
+
+  it('acknowledges the write and confirms power in the background', async () => {
+    const { platform, accessory, onChar, switchService } = createPlatform()
+    let confirm: (() => void) | undefined
+    const setPower = jest.fn()
+      .mockRejectedValueOnce(new ConnectionError('Timed out waiting for a response'))
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        confirm = resolve
+      }))
+    const client = { setPower, getPowerState: jest.fn() } as unknown as ConcertClient
+
+    new PowerAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+
+    // HAP abandons the write at ~9s, and confirming a missing ack takes longer,
+    // so the write must resolve and the confirmation continue out of band.
+    await expect(setHandler(true)).resolves.toBeUndefined()
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: confirming ON in the background')
+    expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S Power: ON')
+
+    confirm?.()
+    await flushDeferredUpdates()
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON')
+    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
   })
 
   it('sets FirmwareRevision from the package version', () => {
@@ -240,16 +345,22 @@ describe('PowerAccessory', () => {
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON (external)')
   })
 
-  it('returns the cached On value from get', () => {
+  it('reports No Response until real state has been observed', async () => {
     const { platform, accessory, onChar } = createPlatform()
     const client = {
       setPower: jest.fn(),
-      getPowerState: jest.fn(),
+      getPowerState: jest.fn().mockResolvedValue(true),
     } as unknown as ConcertClient
 
-    new PowerAccessory(platform, accessory, client)
+    const handler = new PowerAccessory(platform, accessory, client)
     const getHandler = onChar.onGet.mock.calls[0][0] as () => boolean
-    expect(getHandler()).toBe(false)
+
+    // Answering "off" before the first poll would let an automation act on a
+    // value the plugin invented.
+    expect(() => getHandler()).toThrow(FakeHapStatusError)
+
+    await handler.refresh()
+    expect(getHandler()).toBe(true)
   })
 
   it('single-flights concurrent refresh calls', async () => {

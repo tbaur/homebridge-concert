@@ -9,124 +9,59 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PowerAccessory = void 0;
+const api_1 = require("../api");
 const settings_1 = require("../settings");
-const utils_1 = require("../utils");
+const switch_accessory_1 = require("./switch-accessory");
 /**
  * Exposes the receiver as a HomeKit Switch: On → power on, Off → standby.
  */
-class PowerAccessory {
-    platform;
-    accessory;
+class PowerAccessory extends switch_accessory_1.SwitchAccessory {
     client;
-    switchService;
-    zone;
-    isOn = false;
-    /**
-     * Bumped only by HomeKit power sets. A refresh that started before a set
-     * must not overwrite that set; a set is only discarded by a newer set.
-     */
-    setGeneration = 0;
-    /** In-flight refresh promise so overlapping poll ticks share one request. */
-    refreshInFlight;
-    /** True after the first consecutive poll failure has been logged at warn. */
-    pollFailureActive = false;
     constructor(platform, accessory, client) {
-        this.platform = platform;
-        this.accessory = accessory;
+        super(platform, accessory);
         this.client = client;
-        const { Service, Characteristic } = this.platform;
-        const context = this.accessory.context;
-        this.zone = context.zone;
-        const displayName = this.accessory.displayName;
-        this.accessory.getService(Service.AccessoryInformation)
-            .setCharacteristic(Characteristic.Name, displayName)
-            .setCharacteristic(Characteristic.Manufacturer, 'AudioControl')
-            .setCharacteristic(Characteristic.Model, context.model || settings_1.DEFAULT_MODEL)
-            .setCharacteristic(Characteristic.SerialNumber, (0, utils_1.ensureAccessorySerialNumber)(this.accessory))
-            .setCharacteristic(Characteristic.FirmwareRevision, (0, settings_1.readPluginVersion)());
-        this.switchService = this.accessory.getService(Service.Switch)
-            ?? this.accessory.addService(Service.Switch, displayName);
-        this.switchService.displayName = displayName;
-        this.switchService.setCharacteristic(Characteristic.Name, displayName);
-        this.switchService.getCharacteristic(Characteristic.On)
-            .onGet(this.handleGetOn.bind(this))
-            .onSet(this.handleSetOn.bind(this));
     }
-    /** Cached On value for HomeKit get requests. */
-    handleGetOn() {
-        return this.isOn;
+    get offLabel() {
+        return 'STANDBY';
     }
     /** Power the receiver on or put it into standby. */
     async handleSetOn(value) {
         const on = Boolean(value);
-        const mySet = ++this.setGeneration;
-        try {
-            await this.client.setPower(on, this.zone);
-            // Only apply if a newer HomeKit set did not supersede this one. A concurrent
-            // poll must not invalidate a successful plugin-driven set (that used to make
-            // the next poll log the change as "(external)").
-            if (mySet === this.setGeneration) {
-                this.isOn = on;
-                this.platform.log.info(`${this.accessory.displayName}: ${on ? 'ON' : 'STANDBY'}`);
-            }
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.platform.log.error(`${this.accessory.displayName}: set failed: ${message}`);
-            // Revert the characteristic so HomeKit does not show a lying state.
-            this.switchService.updateCharacteristic(this.platform.Characteristic.On, this.isOn);
-            // HapStatusError (not a raw Error) so Homebridge does not log an
-            // "Unhandled error thrown inside write handler" warning.
-            throw new this.platform.api.hap.HapStatusError(-70402 /* HAPStatus.SERVICE_COMMUNICATION_FAILURE */);
-        }
+        return this.runTrackedSet(() => this.attemptPower(on), () => this.notePowerApplied(on));
     }
     /**
-     * Poll the receiver and push the result into HomeKit. Safe to call on a timer.
-     * Concurrent callers share a single in-flight request (single-flight).
+     * Try the RC5 command within HAP's write budget.
      *
-     * `(external)` means the On/Off change was observed by polling — remote, front
-     * panel, HDMI-CEC, etc. — not a HomeKit write handled by this plugin.
+     * XR units sometimes apply a power command without echoing a frame, and
+     * confirming that takes a settle plus one or more state queries — far longer
+     * than HomeKit will wait. Acknowledge the write and confirm out of band.
+     *
+     * @returns whether the new power state is confirmed
      */
-    async refresh() {
-        if (this.refreshInFlight) {
-            return this.refreshInFlight;
-        }
-        this.refreshInFlight = this.runRefresh().finally(() => {
-            this.refreshInFlight = undefined;
-        });
-        return this.refreshInFlight;
-    }
-    async runRefresh() {
-        const setGenerationAtStart = this.setGeneration;
+    async attemptPower(on) {
         try {
-            const on = await this.client.getPowerState(this.zone);
-            // Discard if a HomeKit set started (or completed) while we were awaiting.
-            if (setGenerationAtStart !== this.setGeneration) {
-                return;
-            }
-            if (on !== this.isOn) {
-                this.platform.log.info(`${this.accessory.displayName}: ${on ? 'ON' : 'STANDBY'} (external)`);
-            }
-            this.isOn = on;
-            this.switchService.updateCharacteristic(this.platform.Characteristic.On, on);
-            if (this.pollFailureActive) {
-                this.pollFailureActive = false;
-                this.platform.log.info(`${this.accessory.displayName}: poll recovered`);
-            }
+            await this.client.setPower(on, this.zone, { timeoutMs: settings_1.POWER_SET_TIMEOUT_MS });
+            return true;
         }
         catch (error) {
-            if (setGenerationAtStart !== this.setGeneration) {
-                return;
+            if (!(0, api_1.isReceiverNotReadyError)(error)) {
+                throw error;
             }
-            const message = error instanceof Error ? error.message : String(error);
-            if (!this.pollFailureActive) {
-                this.pollFailureActive = true;
-                this.platform.log.warn(`${this.accessory.displayName}: poll failed: ${message}`);
-            }
-            else {
-                this.platform.log.debug?.(`${this.accessory.displayName}: poll failed: ${message}`);
-            }
+            const label = on ? this.onLabel : this.offLabel;
+            this.platform.log.info(`${this.displayName}: confirming ${label} in the background`);
+            this.completeInBackground(label, () => this.client.setPower(on, this.zone), () => this.notePowerApplied(on));
+            return false;
         }
+    }
+    notePowerApplied(on) {
+        this.recordState(on);
+        this.pushCharacteristic(on);
+        this.platform.log.info(`${this.displayName}: ${on ? this.onLabel : this.offLabel}`);
+        // Volume and source presets report differently once power changes.
+        this.platform.requestRefresh();
+    }
+    async observeState() {
+        return { on: await this.client.getPowerState(this.zone) };
     }
 }
 exports.PowerAccessory = PowerAccessory;

@@ -6,12 +6,13 @@
  */
 
 import {
+  ConfigValidationError,
   accessoryIdentityKey,
+  forLog,
   isValidHost,
   resolveAccessories,
   resolvePort,
   resolveRefreshRateSec,
-  resolveZone,
   validateConfig,
 } from '../../src/utils/validators'
 import type { ConcertPlatformConfig } from '../../src/types'
@@ -82,8 +83,10 @@ describe('validateConfig', () => {
   })
 
   it('rejects hosts with path separators or embedded ports', () => {
-    expect(validateConfig(baseConfig({ host: '192.168.1.50/evil' })).errors.length).toBeGreaterThan(0)
-    expect(validateConfig(baseConfig({ host: '192.168.1.50:50000' })).errors.length).toBeGreaterThan(0)
+    for (const host of ['192.168.1.50/evil', '192.168.1.50:50000']) {
+      const { errors } = validateConfig(baseConfig({ host }))
+      expect(errors.some((e) => e.includes('not a valid hostname or IP address'))).toBe(true)
+    }
   })
 
   it('accepts bracketed IPv6 hosts', () => {
@@ -97,8 +100,9 @@ describe('validateConfig', () => {
       options: { refreshRate: 1 },
     }))
     expect(result.errors).toEqual([])
-    expect(result.warnings.length).toBeGreaterThanOrEqual(2)
-    expect(result.warnings.some((w) => w.includes('using default'))).toBe(true)
+    // Both problems must be reported, not just one of them.
+    expect(result.warnings.some((w) => w.startsWith('port 99999 is invalid'))).toBe(true)
+    expect(result.warnings.some((w) => w.includes('options.refreshRate 1s is below'))).toBe(true)
   })
 
   it('warns when refreshRate is not an integer', () => {
@@ -142,6 +146,30 @@ describe('validateConfig', () => {
     const result = validateConfig(undefined)
     expect(result.errors.length).toBeGreaterThan(0)
   })
+
+  it('rejects control characters in an accessory name', () => {
+    const result = validateConfig(baseConfig({
+      accessories: [{ type: 'power', name: 'XR\n[Concert] forged line' }],
+    }))
+    expect(result.errors.some((e) => e.includes('control characters'))).toBe(true)
+  })
+
+  it('rejects control characters in the platform name', () => {
+    const result = validateConfig(baseConfig({ name: 'Concert\nforged' }))
+    expect(result.errors.some((e) => e.includes('control characters'))).toBe(true)
+  })
+
+  it('neutralizes control characters when echoing an invalid host', () => {
+    const result = validateConfig(baseConfig({ host: 'bad host\nforged' }))
+    expect(result.errors.some((e) => e.includes('\n'))).toBe(false)
+    expect(result.errors.some((e) => e.includes('\uFFFD'))).toBe(true)
+  })
+
+  it('neutralizes control characters when echoing an invalid port', () => {
+    const result = validateConfig(baseConfig({ port: '50000\nforged' as unknown as number }))
+    expect(result.warnings.some((w) => w.includes('\n'))).toBe(false)
+    expect(result.warnings.some((w) => w.includes('\uFFFD'))).toBe(true)
+  })
 })
 
 describe('resolveAccessories', () => {
@@ -162,6 +190,22 @@ describe('resolveAccessories', () => {
     expect(accessoryIdentityKey(resolved[1])).toBe('z1:vol:57')
     expect(accessoryIdentityKey(resolved[2])).toBe('z1:src:cd')
   })
+
+  it('throws ConfigValidationError carrying each message separately', () => {
+    const config = baseConfig({
+      accessories: [
+        { type: 'volumePreset', name: 'Too loud', volume: 150 },
+        { type: 'sourcePreset', name: 'Nope', source: 'NOPE' },
+      ],
+    })
+    expect(() => resolveAccessories(config)).toThrow(ConfigValidationError)
+    try {
+      resolveAccessories(config)
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigValidationError)
+      expect((error as ConfigValidationError).errors).toHaveLength(2)
+    }
+  })
 })
 
 describe('resolvers', () => {
@@ -169,12 +213,6 @@ describe('resolvers', () => {
     expect(resolvePort(50000)).toBe(50000)
     expect(resolvePort(undefined)).toBe(50000)
     expect(resolvePort(0)).toBe(50000)
-  })
-
-  it('resolveZone falls back to 1', () => {
-    expect(resolveZone(2)).toBe(2)
-    expect(resolveZone(undefined)).toBe(1)
-    expect(resolveZone(5)).toBe(1)
   })
 
   it('resolveRefreshRateSec clamps and falls back', () => {
@@ -188,11 +226,47 @@ describe('isValidHost', () => {
   it('accepts common host forms', () => {
     expect(isValidHost('192.168.1.50')).toBe(true)
     expect(isValidHost('avr.local')).toBe(true)
+    expect(isValidHost('receiver')).toBe(true)
+    expect(isValidHost('my-receiver.example.com')).toBe(true)
+  })
+
+  it('accepts IPv6 bare and bracketed', () => {
+    expect(isValidHost('fe80::1')).toBe(true)
+    expect(isValidHost('[fe80::1]')).toBe(true)
   })
 
   it('rejects empty, unsafe, or host:port values', () => {
     expect(isValidHost('')).toBe(false)
     expect(isValidHost('host with spaces')).toBe(false)
     expect(isValidHost('192.168.1.50:50000')).toBe(false)
+  })
+
+  it('rejects malformed hosts that would only fail later at DNS', () => {
+    expect(isValidHost('[]')).toBe(false)
+    expect(isValidHost('[not-an-ip]')).toBe(false)
+    expect(isValidHost('..')).toBe(false)
+    expect(isValidHost('-leading-hyphen')).toBe(false)
+    expect(isValidHost('trailing-hyphen-')).toBe(false)
+    expect(isValidHost('under_score')).toBe(false)
+    expect(isValidHost('host\nname')).toBe(false)
+    expect(isValidHost('a'.repeat(254))).toBe(false)
+  })
+})
+
+describe('forLog', () => {
+  it('replaces control characters so config values cannot forge log lines', () => {
+    expect(forLog('XR\n[Concert] Bridge shutting down')).toBe(
+      'XR\uFFFD[Concert] Bridge shutting down',
+    )
+    expect(forLog('plain')).toBe('plain')
+  })
+
+  it('truncates very long values', () => {
+    expect(forLog('x'.repeat(500))).toHaveLength(101)
+  })
+
+  it('stringifies non-string values', () => {
+    expect(forLog(50_000)).toBe('50000')
+    expect(forLog(undefined)).toBe('undefined')
   })
 })

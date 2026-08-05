@@ -19,13 +19,11 @@ module.exports = {
 
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
 
+  // Mock lifecycle is handled here rather than in per-suite hooks.
   clearMocks: true,
   resetMocks: true,
   restoreMocks: true,
 
-  maxWorkers: 1,
-
-  collectCoverage: true,
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
   coverageThreshold: {
@@ -36,10 +34,16 @@ module.exports = {
       statements: 80,
     },
   },
+  // Barrels are listed individually: a blanket `!src/**/index.ts` also excluded
+  // `src/index.ts` (the plugin entry point) and `src/errors/index.ts`, both of
+  // which carry real logic.
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',
-    '!src/**/index.ts',
+    '!src/api/index.ts',
+    '!src/devices/index.ts',
+    '!src/types/index.ts',
+    '!src/utils/index.ts',
     '!src/settings.ts',
   ],
 

@@ -11,8 +11,6 @@ import { randomUUID } from 'node:crypto'
 
 import type { PlatformAccessory } from 'homebridge'
 
-import type { AccessoryContext } from '../types'
-
 /** Fresh opaque serial for a newly registered accessory. */
 export function newAccessorySerialNumber(): string {
   return randomUUID()
@@ -23,7 +21,7 @@ export function newAccessorySerialNumber(): string {
  * one if missing (first launch or pre-serial cache).
  */
 export function ensureAccessorySerialNumber(accessory: PlatformAccessory): string {
-  const context = accessory.context as AccessoryContext
+  const context = accessory.context as { serialNumber?: unknown }
   if (typeof context.serialNumber === 'string' && context.serialNumber.length > 0) {
     return context.serialNumber
   }

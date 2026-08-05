@@ -12,12 +12,6 @@ if (process.env.NODE_ENV !== 'test') {
   throw new Error('Tests must run with NODE_ENV=test. Use: NODE_ENV=test npm test')
 }
 
+// Mock reset is configured once in jest.config.js (clearMocks / resetMocks /
+// restoreMocks); repeating it in hooks here only obscures where it happens.
 jest.setTimeout(10_000)
-
-beforeEach(() => {
-  jest.clearAllMocks()
-})
-
-afterEach(() => {
-  jest.restoreAllMocks()
-})

@@ -44,7 +44,8 @@ npm run lint:fix      # Auto-fix style issues
 3. Add/update tests
 4. Ensure all tests pass: `npm test` (coverage must stay >= 80%)
 5. Ensure linting passes: `npm run lint`
-6. Commit with a descriptive message
+6. Rebuild and commit the compiled output: `npm run build`, then commit any changes under `dist/`. `dist/` is intentionally tracked in git so installing from a git URL works, and CI fails if it drifts from `src/`.
+7. Commit with a descriptive message
 
 ### Commit Messages
 
@@ -64,19 +65,19 @@ Example: `feat: add volume control for zone 1`
 2. Ensure CI passes (tests, linting)
 3. Request review from maintainers
 
-> `CHANGELOG.md` is generated automatically by release-please from your
-> Conventional Commit / PR titles — do not edit it by hand. See [RELEASING.md](RELEASING.md).
+> `CHANGELOG.md` is generated automatically by release-please from your Conventional Commit / PR titles — do not edit it by hand. See [RELEASING.md](RELEASING.md).
 
 ### PR Checklist
 
 - [ ] Tests added/updated
 - [ ] Linting passes
+- [ ] `dist/` rebuilt and committed (`npm run build`)
 - [ ] Documentation updated
 - [ ] Descriptive PR title (Conventional Commits)
 
 ## Adding Device Support
 
-See [DEVELOPMENT.md](DEVELOPMENT.md#adding-new-capabilities) for details on extending control beyond power.
+See [DEVELOPMENT.md](DEVELOPMENT.md#adding-new-capabilities) for details on adding accessory types and protocol capabilities beyond the current power, volume-preset, and source-preset switches.
 
 ## Reporting Bugs
 
@@ -97,7 +98,7 @@ Open an issue with:
 
 ## Questions?
 
-Open a discussion on GitHub or check existing issues.
+Check [existing issues](https://github.com/tbaur/homebridge-concert/issues) first, and open a new one if your question is not already covered.
 
 ---
 
