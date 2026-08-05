@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.2.1](https://github.com/tbaur/homebridge-concert/compare/v0.2.0...v0.2.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* stop re-announcing accessory adoption on every restart ([744974e](https://github.com/tbaur/homebridge-concert/commit/744974ef06c9a5ae78f50c1ea95f55729310d53a))
+
 ## [0.2.0](https://github.com/tbaur/homebridge-concert/compare/v0.1.11...v0.2.0) (2026-08-05)
 
 
