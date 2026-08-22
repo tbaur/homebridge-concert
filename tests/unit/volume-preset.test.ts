@@ -11,7 +11,11 @@ import { HAPStatus } from 'homebridge'
 import { ANSWER_INVALID_STATE } from '../../src/api/protocol'
 import { VolumePresetAccessory } from '../../src/devices/volume-preset'
 import { ProtocolError } from '../../src/errors'
-import { HOMEKIT_WRITE_BUDGET_MS, STATE_FRESHNESS_MS } from '../../src/settings'
+import {
+  HOMEKIT_WRITE_BUDGET_MS,
+  STATE_FRESHNESS_MS,
+  WAKE_NOT_READY_LOG_AFTER_MS,
+} from '../../src/settings'
 import type { ConcertClient } from '../../src/api'
 import type ConcertPlatform from '../../src/platform'
 
@@ -106,7 +110,14 @@ async function flushDeferredUpdates(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve))
 }
 
+const NOT_READY_LOG = 'XR-8S Volume: receiver is not ready (check power); '
+  + 'retrying in the background for up to 60s'
+
 describe('VolumePresetAccessory', () => {
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
   it('sets volume when turned On', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = mockClient({
@@ -405,19 +416,102 @@ describe('VolumePresetAccessory', () => {
     // HAP abandons a write after ~9s, so a 60s wake retry cannot be reported
     // through it. The write must resolve, not reject.
     await expect(setHandler(true)).resolves.toBeUndefined()
-    expect(platform.log.info).toHaveBeenCalledWith(
-      'XR-8S Volume: receiver is not ready (check power); '
-      + 'retrying in the background for up to 60s',
-    )
     expect(client.setVolumeWhenReady).toHaveBeenCalledWith(57, 1)
+    expect(platform.log.info).not.toHaveBeenCalledWith(NOT_READY_LOG)
     expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S Volume: SET 57')
 
     finishWake?.()
     await flushDeferredUpdates()
 
     // Only once the background work lands is HomeKit told the real value.
+    // A normal 15–20s boot must not emit the not-ready info line.
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: SET 57')
+    expect(platform.log.info).not.toHaveBeenCalledWith(NOT_READY_LOG)
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
+  })
+
+  it('defers the not-ready info log until the receiver has had 30s to wake', async () => {
+    jest.useFakeTimers()
+    const { platform, accessory, onChar } = createPlatform()
+    let finishWake: (() => void) | undefined
+    const client = mockClient({
+      setVolume: jest.fn().mockRejectedValue(
+        new ProtocolError('volume set rejected: invalid command in current state', {
+          answerCode: ANSWER_INVALID_STATE,
+        }),
+      ),
+      setVolumeWhenReady: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+        finishWake = resolve
+      })),
+    })
+
+    new VolumePresetAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+
+    await expect(setHandler(true)).resolves.toBeUndefined()
+    expect(platform.log.info).not.toHaveBeenCalledWith(NOT_READY_LOG)
+
+    await jest.advanceTimersByTimeAsync(WAKE_NOT_READY_LOG_AFTER_MS - 1)
+    expect(platform.log.info).not.toHaveBeenCalledWith(NOT_READY_LOG)
+
+    await jest.advanceTimersByTimeAsync(1)
+    expect(platform.log.info).toHaveBeenCalledWith(NOT_READY_LOG)
+
+    finishWake?.()
+    await jest.advanceTimersByTimeAsync(0)
+  })
+
+  it('does not emit the not-ready log when the wake finishes before 30s', async () => {
+    jest.useFakeTimers()
+    const { platform, accessory, onChar } = createPlatform()
+    let finishWake: (() => void) | undefined
+    const client = mockClient({
+      setVolume: jest.fn().mockRejectedValue(
+        new ProtocolError('volume set rejected: invalid command in current state', {
+          answerCode: ANSWER_INVALID_STATE,
+        }),
+      ),
+      setVolumeWhenReady: jest.fn().mockImplementation(() => new Promise<void>((resolve) => {
+        finishWake = resolve
+      })),
+    })
+
+    new VolumePresetAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+
+    await expect(setHandler(true)).resolves.toBeUndefined()
+    finishWake?.()
+    await jest.advanceTimersByTimeAsync(0)
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: SET 57')
+
+    await jest.advanceTimersByTimeAsync(WAKE_NOT_READY_LOG_AFTER_MS)
+    expect(platform.log.info).not.toHaveBeenCalledWith(NOT_READY_LOG)
+  })
+
+  it('cancels a pending not-ready log when a later write succeeds', async () => {
+    jest.useFakeTimers()
+    const { platform, accessory, onChar } = createPlatform()
+    const notReady = new ProtocolError('invalid command in current state', {
+      answerCode: ANSWER_INVALID_STATE,
+    })
+    const client = mockClient({
+      setVolume: jest.fn()
+        .mockRejectedValueOnce(notReady)
+        .mockResolvedValueOnce(undefined),
+      setVolumeWhenReady: jest.fn().mockImplementation(() => new Promise<void>(() => {
+        // First wake is still running when the second write lands.
+      })),
+    })
+
+    new VolumePresetAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+
+    await expect(setHandler(true)).resolves.toBeUndefined()
+    await expect(setHandler(true)).resolves.toBeUndefined()
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Volume: SET 57')
+
+    await jest.advanceTimersByTimeAsync(WAKE_NOT_READY_LOG_AFTER_MS)
+    expect(platform.log.info).not.toHaveBeenCalledWith(NOT_READY_LOG)
   })
 
   it('corrects HomeKit when the background completion ultimately fails', async () => {

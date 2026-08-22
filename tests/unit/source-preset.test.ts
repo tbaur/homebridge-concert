@@ -320,8 +320,9 @@ describe('SourcePresetAccessory', () => {
     const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
 
     // HAP abandons a write after ~9s, so the wake retry has to be handed off.
+    // The not-ready info line waits 30s; a typical wake never reaches it.
     await expect(setHandler(true)).resolves.toBeUndefined()
-    expect(platform.log.info).toHaveBeenCalledWith(
+    expect(platform.log.info).not.toHaveBeenCalledWith(
       'XR-8S CD: receiver is not ready (check power); '
       + 'retrying in the background for up to 60s',
     )

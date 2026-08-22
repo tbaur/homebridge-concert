@@ -19,6 +19,8 @@ import { SwitchAccessory } from './switch-accessory';
 export declare abstract class PresetSwitchAccessory extends SwitchAccessory {
     /** In-flight On write so HomeKit write storms share one command. */
     private setInFlight?;
+    /** Pending “still not ready” info log; cleared if the wake finishes first. */
+    private wakeNotReadyLogTimer?;
     /** Human-readable target, used in the `SET …` log line. */
     protected abstract get targetLabel(): string;
     /** What this preset polls (`volume`, `source`), used in skip logs. */
@@ -42,6 +44,12 @@ export declare abstract class PresetSwitchAccessory extends SwitchAccessory {
      * @returns whether the preset is confirmed applied
      */
     private attemptPreset;
+    /**
+     * XR cold boot is ~15–20s, so the first not-ready is expected. Only say so
+     * if the receiver is still refusing the command after that window.
+     */
+    private scheduleWakeNotReadyLog;
+    private clearWakeNotReadyLog;
     private notePresetApplied;
     /**
      * Skip while a set is waiting on the receiver, and while the zone is in

@@ -23,6 +23,8 @@ const switch_accessory_1 = require("./switch-accessory");
 class PresetSwitchAccessory extends switch_accessory_1.SwitchAccessory {
     /** In-flight On write so HomeKit write storms share one command. */
     setInFlight;
+    /** Pending “still not ready” info log; cleared if the wake finishes first. */
+    wakeNotReadyLogTimer;
     /**
      * Set On applies the preset; set Off is a no-op.
      *
@@ -61,6 +63,8 @@ class PresetSwitchAccessory extends switch_accessory_1.SwitchAccessory {
      * @returns whether the preset is confirmed applied
      */
     async attemptPreset() {
+        // A later write (success or another wake) must not inherit the old timer.
+        this.clearWakeNotReadyLog();
         try {
             await this.applyPresetNow(settings_1.HOMEKIT_WRITE_BUDGET_MS);
             return true;
@@ -69,11 +73,38 @@ class PresetSwitchAccessory extends switch_accessory_1.SwitchAccessory {
             if (!(0, api_1.isReceiverNotReadyError)(error)) {
                 throw error;
             }
-            this.platform.log.info(`${this.displayName}: receiver is not ready (check power); `
-                + `retrying in the background for up to ${settings_1.WAKE_RETRY_TIMEOUT_SEC}s`);
             this.completeInBackground(`SET ${this.targetLabel}`, () => this.applyPresetWhenReady(), () => this.notePresetApplied());
+            this.scheduleWakeNotReadyLog();
             return false;
         }
+    }
+    /**
+     * XR cold boot is ~15–20s, so the first not-ready is expected. Only say so
+     * if the receiver is still refusing the command after that window.
+     */
+    scheduleWakeNotReadyLog() {
+        this.clearWakeNotReadyLog();
+        const pending = this.pendingBackgroundSet;
+        if (pending === undefined) {
+            return;
+        }
+        const timer = setTimeout(() => {
+            this.wakeNotReadyLogTimer = undefined;
+            if (this.pendingBackgroundSet !== pending) {
+                return;
+            }
+            this.platform.log.info(`${this.displayName}: receiver is not ready (check power); `
+                + `retrying in the background for up to ${settings_1.WAKE_RETRY_TIMEOUT_SEC}s`);
+        }, settings_1.WAKE_NOT_READY_LOG_AFTER_MS);
+        timer.unref?.();
+        this.wakeNotReadyLogTimer = timer;
+    }
+    clearWakeNotReadyLog() {
+        if (this.wakeNotReadyLogTimer === undefined) {
+            return;
+        }
+        clearTimeout(this.wakeNotReadyLogTimer);
+        this.wakeNotReadyLogTimer = undefined;
     }
     notePresetApplied() {
         this.recordState(true);
