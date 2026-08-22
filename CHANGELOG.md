@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [1.0.4](https://github.com/tbaur/homebridge-concert/compare/v1.0.3...v1.0.4) (2026-08-22)
+
+
+### Bug Fixes
+
+* defer not-ready wake log until 30s ([#44](https://github.com/tbaur/homebridge-concert/issues/44)) ([fab0c4f](https://github.com/tbaur/homebridge-concert/commit/fab0c4f7401546d1840a0ae27f5f72a6cf5e756a))
+
 ## [1.0.3](https://github.com/tbaur/homebridge-concert/compare/v1.0.2...v1.0.3) (2026-08-05)
 
 
