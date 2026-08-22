@@ -111,6 +111,13 @@ export declare abstract class SwitchAccessory implements RefreshableAccessory {
     /** True while a set that outlived its HomeKit write is still running. */
     protected get hasPendingSet(): boolean;
     /**
+     * The in-flight background set, if any.
+     *
+     * Identity (not just presence) so a deferred wake log can tell “this wake”
+     * from a later write that replaced it.
+     */
+    protected get pendingBackgroundSet(): Promise<void> | undefined;
+    /**
      * Finish a set that cannot complete inside HAP's write budget.
      *
      * HAP abandons a write handler after {@link HOMEKIT_WRITE_BUDGET_MS} plus its

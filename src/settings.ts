@@ -186,6 +186,12 @@ export const WAKE_RETRY_TIMEOUT_MS = 60_000
 /** {@link WAKE_RETRY_TIMEOUT_MS} in whole seconds, for log messages. */
 export const WAKE_RETRY_TIMEOUT_SEC = WAKE_RETRY_TIMEOUT_MS / 1_000
 
+/**
+ * How long to stay quiet about a still-waking receiver before the not-ready
+ * info log. XR cold boot is ~15–20s, so the first rejection is expected.
+ */
+export const WAKE_NOT_READY_LOG_AFTER_MS = 30_000
+
 /** Maximum time allowed for establishing a TCP connection. */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 5_000
 

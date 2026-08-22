@@ -12,7 +12,11 @@
 import type { CharacteristicValue } from 'homebridge'
 
 import { isReceiverNotReadyError } from '../api'
-import { HOMEKIT_WRITE_BUDGET_MS, WAKE_RETRY_TIMEOUT_SEC } from '../settings'
+import {
+  HOMEKIT_WRITE_BUDGET_MS,
+  WAKE_NOT_READY_LOG_AFTER_MS,
+  WAKE_RETRY_TIMEOUT_SEC,
+} from '../settings'
 import { SwitchAccessory } from './switch-accessory'
 
 /**
@@ -24,6 +28,9 @@ import { SwitchAccessory } from './switch-accessory'
 export abstract class PresetSwitchAccessory extends SwitchAccessory {
   /** In-flight On write so HomeKit write storms share one command. */
   private setInFlight?: Promise<void>
+
+  /** Pending “still not ready” info log; cleared if the wake finishes first. */
+  private wakeNotReadyLogTimer?: ReturnType<typeof setTimeout>
 
   /** Human-readable target, used in the `SET …` log line. */
   protected abstract get targetLabel(): string
@@ -83,6 +90,8 @@ export abstract class PresetSwitchAccessory extends SwitchAccessory {
    * @returns whether the preset is confirmed applied
    */
   private async attemptPreset(): Promise<boolean> {
+    // A later write (success or another wake) must not inherit the old timer.
+    this.clearWakeNotReadyLog()
     try {
       await this.applyPresetNow(HOMEKIT_WRITE_BUDGET_MS)
       return true
@@ -90,17 +99,46 @@ export abstract class PresetSwitchAccessory extends SwitchAccessory {
       if (!isReceiverNotReadyError(error)) {
         throw error
       }
-      this.platform.log.info(
-        `${this.displayName}: receiver is not ready (check power); `
-        + `retrying in the background for up to ${WAKE_RETRY_TIMEOUT_SEC}s`,
-      )
       this.completeInBackground(
         `SET ${this.targetLabel}`,
         () => this.applyPresetWhenReady(),
         () => this.notePresetApplied(),
       )
+      this.scheduleWakeNotReadyLog()
       return false
     }
+  }
+
+  /**
+   * XR cold boot is ~15–20s, so the first not-ready is expected. Only say so
+   * if the receiver is still refusing the command after that window.
+   */
+  private scheduleWakeNotReadyLog(): void {
+    this.clearWakeNotReadyLog()
+    const pending = this.pendingBackgroundSet
+    if (pending === undefined) {
+      return
+    }
+    const timer = setTimeout(() => {
+      this.wakeNotReadyLogTimer = undefined
+      if (this.pendingBackgroundSet !== pending) {
+        return
+      }
+      this.platform.log.info(
+        `${this.displayName}: receiver is not ready (check power); `
+        + `retrying in the background for up to ${WAKE_RETRY_TIMEOUT_SEC}s`,
+      )
+    }, WAKE_NOT_READY_LOG_AFTER_MS)
+    timer.unref?.()
+    this.wakeNotReadyLogTimer = timer
+  }
+
+  private clearWakeNotReadyLog(): void {
+    if (this.wakeNotReadyLogTimer === undefined) {
+      return
+    }
+    clearTimeout(this.wakeNotReadyLogTimer)
+    this.wakeNotReadyLogTimer = undefined
   }
 
   private notePresetApplied(): void {

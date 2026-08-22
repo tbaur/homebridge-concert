@@ -223,6 +223,15 @@ class SwitchAccessory {
         return this.backgroundSet !== undefined;
     }
     /**
+     * The in-flight background set, if any.
+     *
+     * Identity (not just presence) so a deferred wake log can tell “this wake”
+     * from a later write that replaced it.
+     */
+    get pendingBackgroundSet() {
+        return this.backgroundSet;
+    }
+    /**
      * Finish a set that cannot complete inside HAP's write budget.
      *
      * HAP abandons a write handler after {@link HOMEKIT_WRITE_BUDGET_MS} plus its
