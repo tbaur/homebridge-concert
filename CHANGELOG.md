@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [2.0.0](https://github.com/tbaur/homebridge-concert/compare/v1.0.4...v2.0.0) (2026-09-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* requires Homebridge 2.0 or newer and Node 22, 24 or 26. Homebridge 1.x and Node 20 are no longer supported.
+
+### Bug Fixes
+
+* publish a complete accessory so failures can read as No Response ([#50](https://github.com/tbaur/homebridge-concert/issues/50)) ([b70e4d8](https://github.com/tbaur/homebridge-concert/commit/b70e4d8817251c591b51b8fb086ff2c69a82e6f7))
+
 ## [1.0.4](https://github.com/tbaur/homebridge-concert/compare/v1.0.3...v1.0.4) (2026-08-22)
 
 
