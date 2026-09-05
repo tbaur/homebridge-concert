@@ -3,9 +3,9 @@
 [![Tests](https://github.com/tbaur/homebridge-concert/actions/workflows/test.yml/badge.svg)](https://github.com/tbaur/homebridge-concert/actions/workflows/test.yml)
 [![npm version](https://img.shields.io/npm/v/homebridge-concert?style=flat-square)](https://www.npmjs.com/package/homebridge-concert)
 [![npm downloads](https://img.shields.io/npm/dt/homebridge-concert?label=downloads&style=flat-square)](https://www.npmjs.com/package/homebridge-concert)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20-green)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-green)](https://nodejs.org)
 [![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=flat)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
-[![Homebridge](https://img.shields.io/badge/homebridge-%3E%3D1.6.0%20%7C%7C%202.x-purple)](https://homebridge.io)
+[![Homebridge](https://img.shields.io/badge/homebridge-%3E%3D2.0.0-purple)](https://homebridge.io)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Control your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple HomeKit through Homebridge — power/standby, volume presets, and input/source presets as HomeKit Switches.
@@ -36,7 +36,7 @@ Control your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple HomeKit 
 ### Quality
 - **Strict TypeScript** — `strict` mode
 - **Tested** — Jest with ≥80% coverage gate
-- **CI** — Build, lint (warnings are failures), type-check, test on Node 20/22/24; a job against the oldest supported Homebridge; dependency audit and OSV scanning
+- **CI** — Build, lint (warnings are failures), type-check, test on Node 22/24/26; a job against the oldest supported Homebridge; dependency audit and OSV scanning
 - **No Analytics** — Zero tracking or data collection
 
 ## Quick Start
@@ -193,8 +193,8 @@ Talks only to the configured LAN IP — no cloud credentials. Anyone who can rea
 
 ## Requirements
 
-- Homebridge 1.6.0+ or 2.0+
-- Node.js 20+ (Homebridge 2.x itself requires Node 22+, so the Node 20 floor applies to Homebridge 1.x hosts)
+- Homebridge 2.0+
+- Node.js 22, 24, or 26 (the range Homebridge 2.x supports; Node 20 is end-of-life)
 - An AudioControl Concert XR receiver with IP control enabled
 
 ## More Info

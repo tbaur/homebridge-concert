@@ -150,6 +150,14 @@ export declare const WAKE_RETRY_TIMEOUT_MS = 60000;
 /** {@link WAKE_RETRY_TIMEOUT_MS} in whole seconds, for log messages. */
 export declare const WAKE_RETRY_TIMEOUT_SEC: number;
 /**
+ * Overall budget for the out-of-band power confirm.
+ *
+ * The same window the preset sets get, so every background set has one declared
+ * ceiling: the per-request timeouts alone would let the confirm run for ~52s,
+ * and the switch skips its polls for as long as the confirm is pending.
+ */
+export declare const POWER_CONFIRM_TIMEOUT_MS = 60000;
+/**
  * How long to stay quiet about a still-waking receiver before the not-ready
  * info log. XR cold boot is ~15–20s, so the first rejection is expected.
  */

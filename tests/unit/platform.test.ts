@@ -314,45 +314,6 @@ describe('ConcertPlatform', () => {
     api.emit('shutdown')
   })
 
-  it('renames a cached accessory without updateDisplayName via HAP fallback', () => {
-    const api = createMockApi()
-    const log = createLog()
-    const config = validConfig({
-      accessories: [{ type: 'power', name: 'Living Room AVR', zone: 1 }],
-    })
-
-    const platform = new ConcertPlatform(log, config, api)
-    const uuid = api.hap.uuid.generate('concert-z1:power')
-    const hapAccessory = { displayName: 'Old Name' }
-    const cached = {
-      UUID: uuid,
-      displayName: 'Old Name',
-      context: {},
-      _associatedHAPAccessory: hapAccessory,
-      getService: jest.fn().mockReturnValue({
-        setCharacteristic: jest.fn().mockReturnThis(),
-        getCharacteristic: jest.fn().mockReturnValue({
-          onGet: jest.fn().mockReturnThis(),
-          onSet: jest.fn().mockReturnThis(),
-        }),
-        updateCharacteristic: jest.fn(),
-      }),
-      addService: jest.fn(),
-      on: jest.fn(),
-    } as unknown as PlatformAccessory
-
-    platform.configureAccessory(cached)
-    api.emit('didFinishLaunching')
-
-    expect(cached.displayName).toBe('Living Room AVR')
-    expect(hapAccessory.displayName).toBe('Living Room AVR')
-    expect(log.info).toHaveBeenCalledWith('Renamed accessory "Old Name" → "Living Room AVR"')
-    // The fixture must model a real PlatformAccessory closely enough that the
-    // handler actually builds; otherwise this test silently covers the failure path.
-    expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('Skipping accessory'))
-    api.emit('shutdown')
-  })
-
   it('removes stale cached accessories when the target changes', () => {
     const api = createMockApi()
     const log = createLog()
@@ -736,27 +697,90 @@ describe('ConcertPlatform', () => {
       onGet: jest.fn().mockReturnThis(),
       onSet: jest.fn().mockReturnThis(),
     }
-    const platformAccessory = api.platformAccessory as unknown as jest.Mock
-    const buildAccessory = platformAccessory.getMockImplementation()!
-    platformAccessory.mockImplementation((displayName: string, uuid: string) => {
-      const accessory = buildAccessory(displayName, uuid)
-      accessory.getService = jest.fn(() => ({
+    // Restored from disk, so the Switch service is already there. HAP then
+    // rejects a characteristic on it and the handler cannot finish building.
+    const switchService = {
+      setCharacteristic: jest.fn(() => {
+        throw new Error('characteristic value is invalid')
+      }),
+      getCharacteristic: jest.fn(() => onChar),
+      updateCharacteristic: jest.fn(),
+    }
+    const platform = new ConcertPlatform(log, validConfig(), api)
+    platform.configureAccessory({
+      UUID: api.hap.uuid.generate('concert-z1:power'),
+      displayName: 'XR-8S Power',
+      context: { kind: 'power', zone: 1 },
+      getService: jest.fn((service: string) => (service === 'Switch'
+        ? switchService
+        : { setCharacteristic: jest.fn().mockReturnThis() })),
+      addService: jest.fn(),
+      on: jest.fn(),
+    } as unknown as PlatformAccessory)
+
+    api.emit('didFinishLaunching')
+
+    // The fixture only covers this path if the handler really did fail to build.
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining('Skipping accessory'))
+    // HAP answers a read with the value deserialized from its cache when no get
+    // handler is registered, so without this the switch would serve a stale
+    // value instead of showing a fault.
+    const failingGet = onChar.onGet.mock.calls.at(-1)?.[0] as () => unknown
+    expect(failingGet).toBeDefined()
+    expect(() => failingGet()).toThrow()
+    api.emit('shutdown')
+  })
+
+  it('adds the Switch service before registering a brand-new accessory', () => {
+    const api = createMockApi()
+    const log = createLog()
+    const onChar = {
+      onGet: jest.fn().mockReturnThis(),
+      onSet: jest.fn().mockReturnThis(),
+    }
+    const services = new Map<string, unknown>()
+    const addService = jest.fn((service: string, name: string) => {
+      const added = {
+        displayName: name,
         setCharacteristic: jest.fn().mockReturnThis(),
         getCharacteristic: jest.fn(() => onChar),
         updateCharacteristic: jest.fn(),
-      }))
-      accessory.addService = jest.fn(() => {
-        throw new Error('service name is invalid')
-      })
-      return accessory
+      }
+      services.set(service, added)
+      return added
     })
+    // HAP rejects a characteristic on AccessoryInformation, so the handler
+    // throws before the point where it would have added the Switch itself.
+    services.set('AccessoryInformation', {
+      setCharacteristic: jest.fn(() => {
+        throw new Error('characteristic value is invalid')
+      }),
+    })
+    // Faithful to a real PlatformAccessory: a new one has no Switch service
+    // until something adds it, and `getService` only finds it afterwards.
+    ;(api.platformAccessory as unknown as jest.Mock).mockImplementation(
+      (displayName: string, uuid: string) => ({
+        displayName,
+        UUID: uuid,
+        context: {},
+        getService: jest.fn((service: string) => services.get(service)),
+        addService,
+        on: jest.fn(),
+      }),
+    )
 
     new ConcertPlatform(log, validConfig(), api)
     api.emit('didFinishLaunching')
 
-    // HAP answers a read with the value deserialized from its cache when no get
-    // handler is registered, so without this the switch would serve a stale
-    // value instead of showing a fault.
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining('Skipping accessory'))
+    // Registered, so HomeKit keeps the accessory and whatever the user does with
+    // it, and with the Switch already in place rather than the empty tile a
+    // bare AccessoryInformation produces.
+    expect(api.registerPlatformAccessories).toHaveBeenCalled()
+    expect(addService).toHaveBeenCalledWith('Switch', 'XR-8S Power')
+    expect(addService.mock.invocationCallOrder[0]).toBeLessThan(
+      (api.registerPlatformAccessories as jest.Mock).mock.invocationCallOrder[0],
+    )
     const failingGet = onChar.onGet.mock.calls.at(-1)?.[0] as () => unknown
     expect(failingGet).toBeDefined()
     expect(() => failingGet()).toThrow()

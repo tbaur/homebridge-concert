@@ -8,7 +8,7 @@
  * @fileoverview Plugin-wide constants for AudioControl Concert IP control.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UNKNOWN_PLUGIN_VERSION = exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.WAKE_NOT_READY_LOG_AFTER_MS = exports.WAKE_RETRY_TIMEOUT_SEC = exports.WAKE_RETRY_TIMEOUT_MS = exports.WAKE_RETRY_INTERVAL_MS = exports.POWER_STATE_TTL_MS = exports.POWER_SET_TIMEOUT_MS = exports.HOMEKIT_WRITE_BUDGET_MS = exports.POLL_FAILURE_REWARN_MS = exports.POLL_FAILURES_BEFORE_UNKNOWN = exports.STATE_FRESHNESS_MS = exports.QUERY_BREAKER_MAX_COOLDOWN_MS = exports.QUERY_BREAKER_BASE_COOLDOWN_MS = exports.QUERY_BREAKER_FAILURE_THRESHOLD = exports.STATE_QUERY_RETRY_MS = exports.STATE_QUERY_RETRIES = exports.SET_VERIFY_ATTEMPTS = exports.SET_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_ACCESSORY_TEXT_LENGTH = exports.MAX_HOSTNAME_LENGTH = exports.MAX_TCP_PORT = exports.MIN_TCP_PORT = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.MANUFACTURER = exports.DEFAULT_MODEL = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
+exports.UNKNOWN_PLUGIN_VERSION = exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.WAKE_NOT_READY_LOG_AFTER_MS = exports.POWER_CONFIRM_TIMEOUT_MS = exports.WAKE_RETRY_TIMEOUT_SEC = exports.WAKE_RETRY_TIMEOUT_MS = exports.WAKE_RETRY_INTERVAL_MS = exports.POWER_STATE_TTL_MS = exports.POWER_SET_TIMEOUT_MS = exports.HOMEKIT_WRITE_BUDGET_MS = exports.POLL_FAILURE_REWARN_MS = exports.POLL_FAILURES_BEFORE_UNKNOWN = exports.STATE_FRESHNESS_MS = exports.QUERY_BREAKER_MAX_COOLDOWN_MS = exports.QUERY_BREAKER_BASE_COOLDOWN_MS = exports.QUERY_BREAKER_FAILURE_THRESHOLD = exports.STATE_QUERY_RETRY_MS = exports.STATE_QUERY_RETRIES = exports.SET_VERIFY_ATTEMPTS = exports.SET_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_ACCESSORY_TEXT_LENGTH = exports.MAX_HOSTNAME_LENGTH = exports.MAX_TCP_PORT = exports.MIN_TCP_PORT = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.MANUFACTURER = exports.DEFAULT_MODEL = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
 exports.readPluginVersion = readPluginVersion;
 const errors_1 = require("./utils/errors");
 /** Name used to register the plugin with Homebridge (must match package.json name). */
@@ -154,6 +154,14 @@ exports.WAKE_RETRY_INTERVAL_MS = 2_000;
 exports.WAKE_RETRY_TIMEOUT_MS = 60_000;
 /** {@link WAKE_RETRY_TIMEOUT_MS} in whole seconds, for log messages. */
 exports.WAKE_RETRY_TIMEOUT_SEC = exports.WAKE_RETRY_TIMEOUT_MS / 1_000;
+/**
+ * Overall budget for the out-of-band power confirm.
+ *
+ * The same window the preset sets get, so every background set has one declared
+ * ceiling: the per-request timeouts alone would let the confirm run for ~52s,
+ * and the switch skips its polls for as long as the confirm is pending.
+ */
+exports.POWER_CONFIRM_TIMEOUT_MS = exports.WAKE_RETRY_TIMEOUT_MS;
 /**
  * How long to stay quiet about a still-waking receiver before the not-ready
  * info log. XR cold boot is ~15–20s, so the first rejection is expected.

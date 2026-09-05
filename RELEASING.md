@@ -16,7 +16,7 @@ Releases are fully automated with [release-please](https://github.com/googleapis
 
    Pre-1.0 bumps are damped by `bump-minor-pre-major` and `bump-patch-for-minor-pre-major` in `release-please-config.json`; the parenthesized 1.x behavior applies automatically once the first 1.0.0 is cut.
 
-3. The **Tests** workflow runs on the PR (matrix: Node 20, 22, 24, plus a Homebridge 1.6 floor job and an `npm audit` security job), alongside the **OSV-Scanner** workflow's PR scan. The PR is squash-merged to `main`.
+3. The **Tests** workflow runs on the PR (matrix: Node 22, 24, 26, plus an `npm audit` security job), alongside the **OSV-Scanner** workflow's PR scan. The PR is squash-merged to `main`.
 4. **release-please** opens or updates a **Release PR** titled `chore(main): release X.Y.Z`. It carries the version bump in `package.json` and the generated `CHANGELOG.md` entries. Multiple code PRs merged before a release are batched into one Release PR.
 5. Merging the Release PR triggers the `release.yml` workflow, which:
    - creates the `vX.Y.Z` git tag,

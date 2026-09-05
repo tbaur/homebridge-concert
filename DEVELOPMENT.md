@@ -42,7 +42,7 @@ docs/
 
 - **Dependency-light by design.** The Homebridge plugin runtime uses Node's native `net` and pulls in no third-party runtime dependencies. `homebridge` is a dev-only dependency used for *types only* — there is no runtime `import`/`require` of it, so a CommonJS build never has to load an ESM-only host module. Anything needed at runtime (`HAPStatus`, `HapStatusError`, `Service`, `Characteristic`, `uuid`) comes from the injected `api.hap`. `npm audit --omit=dev` reports zero advisories.
 - **`@types/node` tracks the engines floor.** Pinned to the major matching `engines.node`, so the compiler rejects an API that would not exist on the oldest supported runtime. Bumping one without the other silently removes that guarantee.
-- **Compatibility claims are tested, not asserted.** `engines.homebridge` allows `^1.6.0`, so CI type-checks and runs the suite against Homebridge 1.6 as well as the pinned 2.x. The `updateDisplayName` fallback and the deliberately loose `PlatformConfig` constructor parameter both exist to keep that true.
+- **Compatibility claims are tested, not asserted.** `engines.homebridge` is `^2.0.0`, which is what the pinned devDependency type-checks and runs against. The deliberately loose `PlatformConfig` constructor parameter exists to keep that true.
 - **Dev-dependency hygiene.** Two `overrides` entries pin transitive dev dependencies away from known advisories: `js-yaml` to `^4.2.0`, and `brace-expansion` to `^5.0.9` (`5.0.8` and earlier are affected by GHSA-rgw5-rvv9-x895). Both are dev-only and never shipped. Use a floating minimum rather than an exact pin so a future advisory fix is picked up instead of held back.
 - **Pure logic is isolated** in `api/protocol.ts` and `utils/` so it is trivially unit-testable; the TCP client accepts an injectable `createConnection` for testing.
 - **Strict TypeScript**, plus `noUncheckedIndexedAccess` and `noImplicitOverride`. The first matters most in `api/protocol.ts`, which indexes into byte buffers straight off the wire. Tests relax it (they index fixtures they just defined) but nothing else.
@@ -104,7 +104,7 @@ Retries are deliberately fixed-interval rather than exponentially backed off. Th
 - Coverage threshold is 80% across statements, branches, functions, and lines. Excluded: declaration files, the four barrel `index.ts` files, and `settings.ts`. The barrels are listed individually rather than globbed, because `!src/**/index.ts` also silently excluded `src/index.ts` (the plugin entry point) and `src/errors/index.ts`.
 - **Fakes must model the real object, or they hide the path they cover.** The client detaches only the listeners it added (`socket.off(...)`) and leaves an inert `error` listener behind, so the socket fake must be a plain `EventEmitter` that does not intercept `off()` or `emit()`. The same trap has bitten the HAP fakes twice: a `PlatformAccessory` double missing `on()` made every cached-restore test silently exercise the *failure* path instead, and it passed. When a fixture stands in for a real object, assert that the happy path was actually reached — e.g. `expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('Skipping accessory'))`.
 
-Requires **Node.js 20 or newer**, matching the `engines` range in `package.json`. CI runs this suite on Node 20, 22, and 24, plus a job against the oldest supported Homebridge.
+Requires **Node.js 22, 24, or 26**, matching the `engines` range in `package.json`. CI runs this suite on Node 22, 24, and 26, plus a job against the oldest supported Homebridge.
 
 ```bash
 npm install

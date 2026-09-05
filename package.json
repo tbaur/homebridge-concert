@@ -39,7 +39,7 @@
   },
   "homepage": "https://github.com/tbaur/homebridge-concert#readme",
   "overrides": {
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^4.3.1",
     "brace-expansion": "^5.0.9"
   },
   "devDependencies": {
@@ -55,8 +55,8 @@
     "typescript": "^6.0.3"
   },
   "engines": {
-    "homebridge": "^1.6.0 || ^2.0.0",
-    "node": ">=20.0.0"
+    "homebridge": "^2.0.0",
+    "node": "^22 || ^24 || ^26"
   },
   "scripts": {
     "build": "tsc",

@@ -5,12 +5,19 @@
  * See LICENSE file for full license text
  */
 
+import { EventEmitter } from 'node:events'
+import type net from 'node:net'
+
 import type { PlatformAccessory } from 'homebridge'
 
+import { ConcertClient } from '../../src/api/client'
 import { PowerAccessory } from '../../src/devices/power'
 import { ConnectionError } from '../../src/errors'
-import { POLL_FAILURES_BEFORE_UNKNOWN, POWER_SET_TIMEOUT_MS } from '../../src/settings'
-import type { ConcertClient } from '../../src/api'
+import {
+  POLL_FAILURES_BEFORE_UNKNOWN,
+  POWER_CONFIRM_TIMEOUT_MS,
+  POWER_SET_TIMEOUT_MS,
+} from '../../src/settings'
 import type ConcertPlatform from '../../src/platform'
 
 class FakeHapStatusError extends Error {
@@ -91,7 +98,39 @@ async function flushDeferredUpdates(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve))
 }
 
+/**
+ * A receiver that accepts the connection and then says nothing, so every
+ * request can only end in a timeout.
+ */
+function createSilentConnection(): typeof net.createConnection {
+  return (() => {
+    const socket = Object.assign(new EventEmitter(), {
+      write: (_data: Buffer, callback?: (error?: Error | null) => void) => {
+        callback?.(null)
+        return true
+      },
+      destroy: () => undefined,
+    })
+    queueMicrotask(() => socket.emit('connect'))
+    return socket as unknown as net.Socket
+  }) as unknown as typeof net.createConnection
+}
+
+/**
+ * Let fake time pass in small steps so the microtask chains between a timeout,
+ * its retry, and the next socket all get a chance to run.
+ */
+async function advanceInSteps(totalMs: number, stepMs = 50): Promise<void> {
+  for (let elapsed = 0; elapsed < totalMs; elapsed += stepMs) {
+    await jest.advanceTimersByTimeAsync(stepMs)
+  }
+}
+
 describe('PowerAccessory', () => {
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
   it('sets power on and updates local state', async () => {
     const { platform, accessory, onChar, switchService } = createPlatform()
     const client = {
@@ -196,11 +235,45 @@ describe('PowerAccessory', () => {
     await expect(setHandler(true)).resolves.toBeUndefined()
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: confirming ON in the background')
     expect(platform.log.info).not.toHaveBeenCalledWith('XR-8S Power: ON')
+    // The confirm outlives the write, so it carries its own overall budget
+    // rather than inheriting the write's.
+    expect(setPower).toHaveBeenLastCalledWith(true, 1, { timeoutMs: POWER_CONFIRM_TIMEOUT_MS })
 
     confirm?.()
     await flushDeferredUpdates()
     expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: ON')
     expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', true)
+  })
+
+  it('gives up on the background power confirm within its declared budget', async () => {
+    jest.useFakeTimers()
+    const { platform, accessory, onChar, switchService } = createPlatform()
+    // Per-request timeouts long enough that the write plus its verification
+    // queries would outlive the budget. At the shipped 5s they stop short of it
+    // on their own, so the declared ceiling would never be what ends the confirm.
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      requestTimeoutMs: POWER_CONFIRM_TIMEOUT_MS / 2,
+      createConnection: createSilentConnection(),
+    })
+
+    new PowerAccessory(platform, accessory, client)
+    const setHandler = onChar.onSet.mock.calls[0][0] as (value: boolean) => Promise<void>
+    const pendingWrite = setHandler(true)
+    await advanceInSteps(POWER_SET_TIMEOUT_MS)
+    await expect(pendingWrite).resolves.toBeUndefined()
+    expect(platform.log.info).toHaveBeenCalledWith('XR-8S Power: confirming ON in the background')
+
+    await advanceInSteps(POWER_CONFIRM_TIMEOUT_MS)
+
+    // Without a budget the confirm runs as long as the per-request timeouts
+    // allow, and this switch skips every poll for the whole of it.
+    expect(platform.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('XR-8S Power: ON did not complete'),
+    )
+    // HomeKit was told the write succeeded, so the real value has to go back.
+    expect(switchService.updateCharacteristic).toHaveBeenCalledWith('On', false)
+    client.close()
   })
 
   it('sets FirmwareRevision from the package version', () => {
