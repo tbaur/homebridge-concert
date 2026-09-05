@@ -49,7 +49,10 @@ class PowerAccessory extends switch_accessory_1.SwitchAccessory {
             }
             const label = on ? this.onLabel : this.offLabel;
             this.platform.log.info(`${this.displayName}: confirming ${label} in the background`);
-            this.completeInBackground(label, () => this.client.setPower(on, this.zone), () => this.notePowerApplied(on));
+            this.completeInBackground(label, 
+            // Bounded: while this is pending the switch skips its polls, so an
+            // unbounded confirm would also decide how long HomeKit goes unpolled.
+            () => this.client.setPower(on, this.zone, { timeoutMs: settings_1.POWER_CONFIRM_TIMEOUT_MS }), () => this.notePowerApplied(on));
             return false;
         }
     }

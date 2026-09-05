@@ -103,8 +103,8 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     /**
      * Sync the accessory display name onto the PlatformAccessory wrapper and the
      * underlying HAP accessory. Assigning `displayName` alone does not update what
-     * Homebridge serializes / publishes after cache restore — use `updateDisplayName`
-     * when available (Homebridge ≥1.8).
+     * Homebridge serializes / publishes after cache restore, which is why this
+     * goes through `updateDisplayName`.
      */
     private applyAccessoryDisplayName;
     /**

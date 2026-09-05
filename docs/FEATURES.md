@@ -32,8 +32,8 @@
 - ✅ Quiet consecutive poll failures after the first warn
 - ✅ Clean shutdown: in-flight requests fail immediately rather than running out their timeouts
 - ✅ Homebridge UI settings form via `config.schema.json`
-- ✅ Homebridge v1.6.0+ and v2.0+ support
-- ✅ Node.js 20+ support
+- ✅ Homebridge v2.0+ support
+- ✅ Node.js 22 / 24 / 26 support
 
 ## Supported Devices
 

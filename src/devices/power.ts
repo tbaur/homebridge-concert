@@ -10,7 +10,7 @@
 import type { CharacteristicValue, PlatformAccessory } from 'homebridge'
 
 import { isReceiverNotReadyError, type ConcertClient } from '../api'
-import { POWER_SET_TIMEOUT_MS } from '../settings'
+import { POWER_CONFIRM_TIMEOUT_MS, POWER_SET_TIMEOUT_MS } from '../settings'
 import { SwitchAccessory, type StateObservation } from './switch-accessory'
 import type ConcertPlatform from '../platform'
 
@@ -60,7 +60,9 @@ export class PowerAccessory extends SwitchAccessory {
       this.platform.log.info(`${this.displayName}: confirming ${label} in the background`)
       this.completeInBackground(
         label,
-        () => this.client.setPower(on, this.zone),
+        // Bounded: while this is pending the switch skips its polls, so an
+        // unbounded confirm would also decide how long HomeKit goes unpolled.
+        () => this.client.setPower(on, this.zone, { timeoutMs: POWER_CONFIRM_TIMEOUT_MS }),
         () => this.notePowerApplied(on),
       )
       return false

@@ -361,6 +361,12 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
       )
       const accessory = new this.api.platformAccessory(accessoryConfig.name, uuid)
       accessory.context = context
+      // Added here rather than left to the handler so the accessory is complete
+      // before it is published, and so a handler that fails to build still
+      // leaves a Switch for `markAccessoryUnavailable` to fault. Registered with
+      // only AccessoryInformation it would be an empty tile in the Home app,
+      // with nothing able to report No Response.
+      accessory.addService(this.Service.Switch, accessoryConfig.name)
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory])
       this.accessories.push(accessory)
       return accessory
@@ -440,28 +446,15 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   /**
    * Sync the accessory display name onto the PlatformAccessory wrapper and the
    * underlying HAP accessory. Assigning `displayName` alone does not update what
-   * Homebridge serializes / publishes after cache restore — use `updateDisplayName`
-   * when available (Homebridge ≥1.8).
+   * Homebridge serializes / publishes after cache restore, which is why this
+   * goes through `updateDisplayName`.
    */
   private applyAccessoryDisplayName(accessory: PlatformAccessory, name: string): void {
     if (accessory.displayName === name) {
       return
     }
     const previous = accessory.displayName
-    // Both members are declared optional here so this compiles against
-    // Homebridge 1.6 (no `updateDisplayName`) and 2.x alike.
-    const legacy = accessory as PlatformAccessory & {
-      updateDisplayName?: (value: string) => void
-      _associatedHAPAccessory?: { displayName?: string }
-    }
-    if (typeof legacy.updateDisplayName === 'function') {
-      legacy.updateDisplayName(name)
-    } else {
-      accessory.displayName = name
-      if (legacy._associatedHAPAccessory) {
-        legacy._associatedHAPAccessory.displayName = name
-      }
-    }
+    accessory.updateDisplayName(name)
     this.log.info(`Renamed accessory "${previous}" → "${name}"`)
   }
 
