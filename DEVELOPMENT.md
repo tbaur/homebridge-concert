@@ -53,7 +53,7 @@ docs/
 
 ## Reliability & performance
 
-This plugin talks to a **LAN TCP** control port, so its resilience focuses on making each request robust:
+This plugin talks to a **LAN TCP** control port, so each request has to keep working when the receiver does not answer:
 
 - **Short-lived connections** — each query/set opens a TCP socket, sends one frame, reads one response, and closes. That avoids sticky half-open sockets if the receiver drops idle clients in standby.
 - **Serialized TCP** — `ConcertClient` runs one command at a time so Power + Volume polls (and sets) never open overlapping sockets against a flaky standby stack.
