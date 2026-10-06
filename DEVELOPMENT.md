@@ -87,7 +87,7 @@ An accessory's UUID is derived from its identity key alone (`z1:power`, `z1:vol:
 
 A HAP accessory UUID is immutable, so adoption is permanent rather than a one-time conversion: an adopted accessory keeps its legacy UUID and takes the identity-matching path on every launch. `adoptedLegacyUuid` is persisted into the context so the notice is logged at info once and at debug thereafter — otherwise every restart announces an upgrade that already happened.
 
-Changing a preset's value still produces a different accessory, because the value *is* the identity. Renaming is handled separately and in place: `applyAccessoryDisplayName` uses `updateDisplayName` on Homebridge ≥1.8 and falls back to writing `displayName` plus the private `_associatedHAPAccessory` on older versions, because assigning `displayName` alone is not persisted across a cache restore.
+Changing a preset's value still produces a different accessory, because the value *is* the identity. Renaming is handled separately and in place: `applyAccessoryDisplayName` calls `updateDisplayName`, because assigning `displayName` alone is not persisted across a cache restore.
 
 ### No handler means No Response
 
@@ -104,7 +104,7 @@ Retries are deliberately fixed-interval rather than exponentially backed off. Th
 - Coverage threshold is 80% across statements, branches, functions, and lines. Excluded: declaration files, the four barrel `index.ts` files, and `settings.ts`. The barrels are listed individually rather than globbed, because `!src/**/index.ts` also silently excluded `src/index.ts` (the plugin entry point) and `src/errors/index.ts`.
 - **Fakes must model the real object, or they hide the path they cover.** The client detaches only the listeners it added (`socket.off(...)`) and leaves an inert `error` listener behind, so the socket fake must be a plain `EventEmitter` that does not intercept `off()` or `emit()`. The same trap has bitten the HAP fakes twice: a `PlatformAccessory` double missing `on()` made every cached-restore test silently exercise the *failure* path instead, and it passed. When a fixture stands in for a real object, assert that the happy path was actually reached — e.g. `expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('Skipping accessory'))`.
 
-Requires **Node.js 22, 24, or 26**, matching the `engines` range in `package.json`. CI runs this suite on Node 22, 24, and 26, plus a job against the oldest supported Homebridge.
+Requires **Node.js 22, 24, or 26** and **Homebridge 2.x**, matching the `engines` range in `package.json`. CI runs this suite on Node 22, 24, and 26.
 
 ```bash
 npm install
