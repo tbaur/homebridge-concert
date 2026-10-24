@@ -205,6 +205,10 @@ Talks only to the configured LAN IP — no cloud credentials. Anyone who can rea
 - [Report Issues](https://github.com/tbaur/homebridge-concert/issues)
 - [Changelog](https://github.com/tbaur/homebridge-concert/blob/main/CHANGELOG.md)
 
+## Trademarks
+
+homebridge-concert is an independent project. It is not affiliated with or endorsed by AudioControl. AudioControl and Concert XR are trademarks of AAMP of Florida, Inc.
+
 ## License
 
 Copyright 2026 tbaur
