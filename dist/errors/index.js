@@ -11,9 +11,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProtocolError = exports.ConnectionError = void 0;
 /** TCP connect / write / timeout failure talking to the receiver. */
 class ConnectionError extends Error {
+    /**
+     * True when the query breaker refused this attempt before dialing.
+     * The receiver was not contacted, so the attempt is not a new failure.
+     */
+    paused;
     constructor(message, options) {
-        super(message, options);
+        super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
         this.name = 'ConnectionError';
+        this.paused = options?.paused === true;
     }
 }
 exports.ConnectionError = ConnectionError;

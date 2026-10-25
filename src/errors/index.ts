@@ -9,9 +9,16 @@
 
 /** TCP connect / write / timeout failure talking to the receiver. */
 export class ConnectionError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options)
+  /**
+   * True when the query breaker refused this attempt before dialing.
+   * The receiver was not contacted, so the attempt is not a new failure.
+   */
+  readonly paused: boolean
+
+  constructor(message: string, options?: { cause?: unknown; paused?: boolean }) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined)
     this.name = 'ConnectionError'
+    this.paused = options?.paused === true
   }
 }
 

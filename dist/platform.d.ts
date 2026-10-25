@@ -33,6 +33,8 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
     private stopped;
     /** True when startup validation failed; the platform stays inert. */
     private disabled;
+    /** Absent unless options.pagerdutySignals is on. Nothing touches the store while it is absent. */
+    private signals?;
     /**
      * @param config - Whatever Homebridge read from `config.json`. Typed as the
      *   generic `PlatformConfig` rather than {@link ConcertPlatformConfig} because

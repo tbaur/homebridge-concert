@@ -18,6 +18,8 @@ import type {
 } from 'homebridge'
 
 import { ConcertClient } from './api'
+import { PAGERDUTY_STARTUP_LOG, createConcertSignals } from './concert-signals'
+import type { ConcertSignals } from './concert-signals'
 import { PowerAccessory, SourcePresetAccessory, VolumePresetAccessory } from './devices'
 import {
   DEFAULT_MODEL,
@@ -96,6 +98,8 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   private stopped = false
   /** True when startup validation failed; the platform stays inert. */
   private disabled = false
+  /** Absent unless options.pagerdutySignals is on. Nothing touches the store while it is absent. */
+  private signals?: ConcertSignals
 
   /**
    * @param config - Whatever Homebridge read from `config.json`. Typed as the
@@ -126,6 +130,14 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
       this.disabled = true
     } else {
       this.log.info(`Initializing ${this.config.name ?? PLATFORM_NAME} platform`)
+      if (this.config.options?.pagerdutySignals === true) {
+        this.signals = createConcertSignals({
+          plugin: PLUGIN_NAME,
+          storagePath: this.api.user.storagePath(),
+          log: this.log,
+        })
+        this.log.info(PAGERDUTY_STARTUP_LOG)
+      }
     }
 
     // Always register lifecycle handlers so a disabled platform can still clear
@@ -170,6 +182,7 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   /** Stop the poll timer, release client resources, and mark the platform stopped. */
   private stopPolling(): void {
     this.stopped = true
+    this.signals?.close()
     if (this.pollTimer) {
       clearInterval(this.pollTimer)
       this.pollTimer = undefined
@@ -226,6 +239,13 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
       host,
       port,
       logger: this.log,
+      onExchange: (result) => {
+        if (result === 'reply') {
+          this.signals?.noteReply()
+        } else {
+          this.signals?.noteUnreachable()
+        }
+      },
     })
     this.powerHandlers.length = 0
     this.presetHandlers.length = 0
@@ -579,19 +599,30 @@ export default class ConcertPlatform implements DynamicPlatformPlugin {
   }
 
   private async runRefreshAll(): Promise<void> {
-    for (const handler of this.powerHandlers) {
+    this.signals?.beginCycle()
+    let completed = false
+    try {
+      for (const handler of this.powerHandlers) {
+        if (this.stopped) {
+          return
+        }
+        await this.refreshOne(handler)
+      }
       if (this.stopped) {
         return
       }
-      await this.refreshOne(handler)
+      // Presets refresh together so the client's per-zone in-flight coalescing
+      // collapses several presets on one zone into a single query. Refreshing
+      // them one at a time defeats that and costs one TCP round trip each.
+      await Promise.all(this.presetHandlers.map((handler) => this.refreshOne(handler)))
+      completed = true
+    } finally {
+      // A post-set walk can clear the page when a reply arrives, but only a
+      // scheduled poll counts toward the three unreachable cycles.
+      if (completed && !this.stopped && this.refreshAllReason === 'poll') {
+        this.signals?.finishPollCycle()
+      }
     }
-    if (this.stopped) {
-      return
-    }
-    // Presets refresh together so the client's per-zone in-flight coalescing
-    // collapses several presets on one zone into a single query. Refreshing
-    // them one at a time defeats that and costs one TCP round trip each.
-    await Promise.all(this.presetHandlers.map((handler) => this.refreshOne(handler)))
   }
 
   /**

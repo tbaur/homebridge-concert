@@ -8,8 +8,14 @@
  */
 /** TCP connect / write / timeout failure talking to the receiver. */
 export declare class ConnectionError extends Error {
+    /**
+     * True when the query breaker refused this attempt before dialing.
+     * The receiver was not contacted, so the attempt is not a new failure.
+     */
+    readonly paused: boolean;
     constructor(message: string, options?: {
         cause?: unknown;
+        paused?: boolean;
     });
 }
 /** The receiver replied with a non-success answer code or an unreadable frame. */

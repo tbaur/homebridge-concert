@@ -101,6 +101,14 @@ module.exports = [
     },
   },
   {
+    // Copied verbatim from homebridge-pagerduty docs/SIGNALS-AGENT.md.
+    files: ['src/pagerduty-signals.ts'],
+    rules: {
+      'semi': 'off',
+      'comma-dangle': 'off',
+    },
+  },
+  {
     // Config files are linted, but they are CommonJS and outside the TS project.
     files: ['*.config.js'],
     languageOptions: {

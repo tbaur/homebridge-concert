@@ -57,6 +57,7 @@ class ConcertClient {
     requestTimeoutMs;
     log;
     createConnection;
+    onExchange;
     /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
     volumeQueryInFlight = new Map();
     /** Coalesce concurrent source queries for the same zone (poll fan-out). */
@@ -87,6 +88,7 @@ class ConcertClient {
         this.requestTimeoutMs = options.requestTimeoutMs ?? settings_1.DEFAULT_REQUEST_TIMEOUT_MS;
         this.log = options.logger ?? {};
         this.createConnection = options.createConnection ?? node_net_1.default.createConnection;
+        this.onExchange = options.onExchange;
     }
     /**
      * @throws {RangeError} when an explicit zone is out of range. Silently
@@ -149,7 +151,25 @@ class ConcertClient {
             return;
         }
         throw new errors_1.ConnectionError(`${this.host}:${this.port} unreachable for ${this.consecutiveQueryFailures} `
-            + `consecutive queries; pausing polls for ${Math.ceil(cooldownRemaining / 1000)}s`);
+            + `consecutive queries; pausing polls for ${Math.ceil(cooldownRemaining / 1000)}s`, { paused: true });
+    }
+    /**
+     * Tell the offline page what this exchange was.
+     *
+     * No argument means a frame arrived. A paused query is not an exchange:
+     * the breaker returned before dialing.
+     */
+    observeExchange(error) {
+        if (this.onExchange === undefined) {
+            return;
+        }
+        if (error === undefined || error instanceof errors_1.ProtocolError) {
+            this.onExchange('reply');
+            return;
+        }
+        if (error instanceof errors_1.ConnectionError && !error.paused) {
+            this.onExchange('unreachable');
+        }
     }
     /** A completed exchange proves the receiver is reachable; reset the breaker. */
     noteReachable() {
@@ -603,7 +623,9 @@ class ConcertClient {
             return Promise.reject(new errors_1.ConnectionError('Client is closed'));
         }
         if (isExpired(deadline)) {
-            return Promise.reject(new errors_1.ConnectionError(`Ran out of time waiting for ${host}:${port} to become ready`));
+            const error = new errors_1.ConnectionError(`Ran out of time waiting for ${host}:${port} to become ready`);
+            this.observeExchange(error);
+            return Promise.reject(error);
         }
         this.log.debug?.(`→ ${host}:${port} ${(0, protocol_1.formatFrame)(request)}`);
         return new Promise((resolve, reject) => {
@@ -617,13 +639,15 @@ class ConcertClient {
             }
             catch (error) {
                 // e.g. an option rejected by net before any socket/timer exists.
-                reject(new errors_1.ConnectionError(`Connection to ${host}:${port} failed: ${(0, errors_2.describeError)(error)}`, {
-                    cause: error,
-                }));
+                const wrapped = new errors_1.ConnectionError(`Connection to ${host}:${port} failed: ${(0, errors_2.describeError)(error)}`, { cause: error });
+                this.observeExchange(wrapped);
+                reject(wrapped);
                 return;
             }
             if (!socket) {
-                reject(new errors_1.ConnectionError(`Connection to ${host}:${port} produced no socket`));
+                const error = new errors_1.ConnectionError(`Connection to ${host}:${port} produced no socket`);
+                this.observeExchange(error);
+                reject(error);
                 return;
             }
             const target = `${host}:${port} zone ${zone}`;
@@ -657,6 +681,7 @@ class ConcertClient {
             };
             const fail = (error) => {
                 if (cleanup()) {
+                    this.observeExchange(error);
                     reject(error);
                 }
             };
@@ -664,6 +689,7 @@ class ConcertClient {
                 if (!cleanup()) {
                     return;
                 }
+                this.observeExchange();
                 this.log.debug?.(`← ${host}:${port} cmd=0x${response.command.toString(16)} `
                     + `answer=${(0, protocol_1.describeAnswerCode)(response.answerCode)} data=${(0, protocol_1.formatFrame)(response.data)}`);
                 resolve(response);

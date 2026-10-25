@@ -13,6 +13,8 @@
 import net from 'node:net';
 import type { PluginLogger } from '../types';
 import { type SourceDefinition, type SourceId } from './protocol';
+/** What one exchange with the receiver meant for the offline page. */
+export type ExchangeResult = 'reply' | 'unreachable';
 export interface ConcertClientOptions {
     host: string;
     port?: number;
@@ -21,6 +23,11 @@ export interface ConcertClientOptions {
     logger?: PluginLogger;
     /** Injected for tests; defaults to `net.createConnection`. */
     createConnection?: typeof net.createConnection;
+    /**
+     * A frame arrived, or a dial failed. A query the breaker refused before
+     * dialing is not reported. Optional so the client stays usable without signals.
+     */
+    onExchange?: (result: ExchangeResult) => void;
 }
 /** Options shared by the set methods. */
 export interface SetOptions {
@@ -46,6 +53,7 @@ export declare class ConcertClient {
     private readonly requestTimeoutMs;
     private readonly log;
     private readonly createConnection;
+    private readonly onExchange?;
     /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
     private readonly volumeQueryInFlight;
     /** Coalesce concurrent source queries for the same zone (poll fan-out). */
@@ -96,6 +104,13 @@ export declare class ConcertClient {
      * action and always gets to try.
      */
     private assertQueryAllowed;
+    /**
+     * Tell the offline page what this exchange was.
+     *
+     * No argument means a frame arrived. A paused query is not an exchange:
+     * the breaker returned before dialing.
+     */
+    private observeExchange;
     /** A completed exchange proves the receiver is reachable; reset the breaker. */
     private noteReachable;
     /**

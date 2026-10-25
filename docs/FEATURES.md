@@ -25,6 +25,7 @@
 - ✅ Poll failures keep last known On (volume and source match power); no fake “(external)” flip on timeout recover
 - ✅ One automatic retry on transient power-, volume-, and source-query timeouts
 - ✅ Circuit breaker pauses polling of an unreachable receiver, escalating per cool-off rather than per query; HomeKit-initiated sets always still try
+- ✅ Optional PagerDuty signal (`options.pagerdutySignals`, default off): `receiver-offline` (error) after 3 poll cycles that dialed the receiver and got no reply. A rejected command or a standby reply clears it. A paused poll does not count. The summary does not include the host. See [PagerDuty](README-DETAILED.md#pagerduty).
 - ✅ A refused or unresolvable host fails fast instead of consuming the wake-retry window
 - ✅ Reports HomeKit “No Response” until real state has been observed, and again after repeated poll failures, instead of asserting an unconfirmed value
 - ✅ Presets report Off while the zone is in standby, and a successful set re-reads sibling switches so two levels or inputs are never both On

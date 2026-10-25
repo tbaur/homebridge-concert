@@ -3,7 +3,7 @@
   "pluginType": "platform",
   "singular": true,
   "headerDisplay": "Homebridge plugin for AudioControl Concert XR receivers. Expose power, volume-preset, and source-preset switches over the LAN IP control port (default 50000). On the receiver, set **Control** to **IP** and **Standby Mode** to **IP and HDMI ON** so the unit remains reachable while in standby.",
-  "footerDisplay": "For help, see the [README](https://github.com/tbaur/homebridge-concert#readme). Protocol details for contributors: [docs/PROTOCOL.md](https://github.com/tbaur/homebridge-concert/blob/main/docs/PROTOCOL.md).",
+  "footerDisplay": "For help, see the [README](https://github.com/tbaur/homebridge-concert#readme) and [detailed documentation](https://github.com/tbaur/homebridge-concert/blob/main/docs/README-DETAILED.md).",
   "schema": {
     "type": "object",
     "required": ["name", "host", "accessories"],
@@ -105,6 +105,12 @@
             "default": 90,
             "placeholder": "90",
             "description": "How often to poll the receiver for accessory state. Default 90 seconds. Values below 5 fall back to 90; values above 86400 are clamped."
+          },
+          "pagerdutySignals": {
+            "title": "Send Signals to PagerDuty",
+            "type": "boolean",
+            "default": false,
+            "description": "Write this plugin's alert conditions to homebridge-pagerduty's signal store. Then allow homebridge-concert to page in homebridge-pagerduty's settings. Needs Node 22.13 or later."
           }
         }
       }
@@ -177,6 +183,7 @@
     {
       "key": "options.refreshRate",
       "type": "integer"
-    }
+    },
+    "options.pagerdutySignals"
   ]
 }
