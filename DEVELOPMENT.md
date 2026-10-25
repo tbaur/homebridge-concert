@@ -9,6 +9,8 @@ src/
                         refresh + wake-retry windows, breaker thresholds, volume range)
                         and `readPluginVersion()`.
   platform.ts           Accessory lifecycle, multi-accessory discovery, shared polling, stale cleanup.
+  concert-signals.ts   When the receiver is unreachable enough to page through PagerDuty.
+  pagerduty-signals.ts  Signal-store writer, copied from homebridge-pagerduty. Do not edit it.
   types/                Plugin config + accessory context types.
   errors/               Structured, typed error hierarchy.
   api/
@@ -32,6 +34,7 @@ src/
     index.ts            Barrel exports.
 config.schema.json      Homebridge UI settings form (platform config).
 docs/
+  README-DETAILED.md    Full options, switch behavior, logs, and troubleshooting.
   FEATURES.md           Feature checklist.
   PROTOCOL.md           Full automation protocol catalog for contributors.
 ```

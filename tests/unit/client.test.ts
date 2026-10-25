@@ -1146,4 +1146,75 @@ describe('ConcertClient', () => {
     await expect(client.setPower(false, 1)).resolves.toBeUndefined()
     expect(client.getLastPowerState(1)).toBe(false)
   })
+
+  it('reports a status frame as a reply', async () => {
+    const events: string[] = []
+    const socket = new FakeSocket()
+    const createConnection = jest.fn(() => {
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+      onExchange: (result) => {
+        events.push(result)
+      },
+    })
+
+    const pending = client.getPowerState()
+    await new Promise((resolve) => setImmediate(resolve))
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+
+    await expect(pending).resolves.toBe(true)
+    expect(events).toEqual(['reply'])
+  })
+
+  it('reports a rejected command as a reply', async () => {
+    const events: string[] = []
+    const socket = new FakeSocket()
+    const createConnection = jest.fn(() => {
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+      onExchange: (result) => {
+        events.push(result)
+      },
+    })
+
+    const pending = client.getPowerState()
+    await new Promise((resolve) => setImmediate(resolve))
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_INVALID_STATE, 0x00, 0x0d]))
+
+    await expect(pending).rejects.toBeInstanceOf(ProtocolError)
+    expect(events).toEqual(['reply'])
+  })
+
+  it('does not report a paused poll as a new unreachable attempt', async () => {
+    const events: string[] = []
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => socket.emit('error', new Error('ECONNREFUSED')))
+      return socket as unknown as net.Socket
+    })
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+      onExchange: (result) => {
+        events.push(result)
+      },
+    })
+
+    for (let attempt = 0; attempt < QUERY_BREAKER_FAILURE_THRESHOLD; attempt++) {
+      await expect(client.getPowerState()).rejects.toBeInstanceOf(ConnectionError)
+    }
+    const noted = events.length
+    expect(events.every((event) => event === 'unreachable')).toBe(true)
+
+    await expect(client.getPowerState()).rejects.toThrow(/pausing polls/)
+    expect(events).toHaveLength(noted)
+  })
 })

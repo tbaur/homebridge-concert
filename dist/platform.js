@@ -9,6 +9,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const api_1 = require("./api");
+const concert_signals_1 = require("./concert-signals");
 const devices_1 = require("./devices");
 const settings_1 = require("./settings");
 const utils_1 = require("./utils");
@@ -62,6 +63,8 @@ class ConcertPlatform {
     stopped = false;
     /** True when startup validation failed; the platform stays inert. */
     disabled = false;
+    /** Absent unless options.pagerdutySignals is on. Nothing touches the store while it is absent. */
+    signals;
     /**
      * @param config - Whatever Homebridge read from `config.json`. Typed as the
      *   generic `PlatformConfig` rather than {@link ConcertPlatformConfig} because
@@ -89,6 +92,14 @@ class ConcertPlatform {
         }
         else {
             this.log.info(`Initializing ${this.config.name ?? settings_1.PLATFORM_NAME} platform`);
+            if (this.config.options?.pagerdutySignals === true) {
+                this.signals = (0, concert_signals_1.createConcertSignals)({
+                    plugin: settings_1.PLUGIN_NAME,
+                    storagePath: this.api.user.storagePath(),
+                    log: this.log,
+                });
+                this.log.info(concert_signals_1.PAGERDUTY_STARTUP_LOG);
+            }
         }
         // Always register lifecycle handlers so a disabled platform can still clear
         // orphaned cached accessories and shut down cleanly.
@@ -130,6 +141,7 @@ class ConcertPlatform {
     /** Stop the poll timer, release client resources, and mark the platform stopped. */
     stopPolling() {
         this.stopped = true;
+        this.signals?.close();
         if (this.pollTimer) {
             clearInterval(this.pollTimer);
             this.pollTimer = undefined;
@@ -175,6 +187,14 @@ class ConcertPlatform {
             host,
             port,
             logger: this.log,
+            onExchange: (result) => {
+                if (result === 'reply') {
+                    this.signals?.noteReply();
+                }
+                else {
+                    this.signals?.noteUnreachable();
+                }
+            },
         });
         this.powerHandlers.length = 0;
         this.presetHandlers.length = 0;
@@ -475,19 +495,31 @@ class ConcertPlatform {
         return this.refreshAllInFlight;
     }
     async runRefreshAll() {
-        for (const handler of this.powerHandlers) {
+        this.signals?.beginCycle();
+        let completed = false;
+        try {
+            for (const handler of this.powerHandlers) {
+                if (this.stopped) {
+                    return;
+                }
+                await this.refreshOne(handler);
+            }
             if (this.stopped) {
                 return;
             }
-            await this.refreshOne(handler);
+            // Presets refresh together so the client's per-zone in-flight coalescing
+            // collapses several presets on one zone into a single query. Refreshing
+            // them one at a time defeats that and costs one TCP round trip each.
+            await Promise.all(this.presetHandlers.map((handler) => this.refreshOne(handler)));
+            completed = true;
         }
-        if (this.stopped) {
-            return;
+        finally {
+            // A post-set walk can clear the page when a reply arrives, but only a
+            // scheduled poll counts toward the three unreachable cycles.
+            if (completed && !this.stopped && this.refreshAllReason === 'poll') {
+                this.signals?.finishPollCycle();
+            }
         }
-        // Presets refresh together so the client's per-zone in-flight coalescing
-        // collapses several presets on one zone into a single query. Refreshing
-        // them one at a time defeats that and costs one TCP round trip each.
-        await Promise.all(this.presetHandlers.map((handler) => this.refreshOne(handler)));
     }
     /**
      * Refresh one handler; a handler that throws must not abort the whole walk.

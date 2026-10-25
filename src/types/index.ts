@@ -72,6 +72,11 @@ export interface ConcertPlatformConfig extends PlatformConfig {
   options?: {
     /** Polling interval in seconds for accessory state. */
     refreshRate?: number
+    /**
+     * Write receiver-offline to the homebridge-pagerduty signal store.
+     * Off until set. This plugin does not read the store back.
+     */
+    pagerdutySignals?: boolean
   }
 }
 

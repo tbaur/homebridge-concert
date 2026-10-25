@@ -8,7 +8,7 @@
  * @fileoverview Plugin-wide constants for AudioControl Concert IP control.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UNKNOWN_PLUGIN_VERSION = exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.WAKE_NOT_READY_LOG_AFTER_MS = exports.POWER_CONFIRM_TIMEOUT_MS = exports.WAKE_RETRY_TIMEOUT_SEC = exports.WAKE_RETRY_TIMEOUT_MS = exports.WAKE_RETRY_INTERVAL_MS = exports.POWER_STATE_TTL_MS = exports.POWER_SET_TIMEOUT_MS = exports.HOMEKIT_WRITE_BUDGET_MS = exports.POLL_FAILURE_REWARN_MS = exports.POLL_FAILURES_BEFORE_UNKNOWN = exports.STATE_FRESHNESS_MS = exports.QUERY_BREAKER_MAX_COOLDOWN_MS = exports.QUERY_BREAKER_BASE_COOLDOWN_MS = exports.QUERY_BREAKER_FAILURE_THRESHOLD = exports.STATE_QUERY_RETRY_MS = exports.STATE_QUERY_RETRIES = exports.SET_VERIFY_ATTEMPTS = exports.SET_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_ACCESSORY_TEXT_LENGTH = exports.MAX_HOSTNAME_LENGTH = exports.MAX_TCP_PORT = exports.MIN_TCP_PORT = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.MANUFACTURER = exports.DEFAULT_MODEL = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
+exports.UNKNOWN_PLUGIN_VERSION = exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.WAKE_NOT_READY_LOG_AFTER_MS = exports.POWER_CONFIRM_TIMEOUT_MS = exports.WAKE_RETRY_TIMEOUT_SEC = exports.WAKE_RETRY_TIMEOUT_MS = exports.WAKE_RETRY_INTERVAL_MS = exports.POWER_STATE_TTL_MS = exports.POWER_SET_TIMEOUT_MS = exports.HOMEKIT_WRITE_BUDGET_MS = exports.POLL_FAILURE_REWARN_MS = exports.UNREACHABLE_POLLS_BEFORE_PAGE = exports.POLL_FAILURES_BEFORE_UNKNOWN = exports.STATE_FRESHNESS_MS = exports.QUERY_BREAKER_MAX_COOLDOWN_MS = exports.QUERY_BREAKER_BASE_COOLDOWN_MS = exports.QUERY_BREAKER_FAILURE_THRESHOLD = exports.STATE_QUERY_RETRY_MS = exports.STATE_QUERY_RETRIES = exports.SET_VERIFY_ATTEMPTS = exports.SET_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_ACCESSORY_TEXT_LENGTH = exports.MAX_HOSTNAME_LENGTH = exports.MAX_TCP_PORT = exports.MIN_TCP_PORT = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.MANUFACTURER = exports.DEFAULT_MODEL = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
 exports.readPluginVersion = readPluginVersion;
 const errors_1 = require("./utils/errors");
 /** Name used to register the plugin with Homebridge (must match package.json name). */
@@ -106,6 +106,14 @@ exports.STATE_FRESHNESS_MS = 5_000;
  * a single timeout does not make the switch flicker.
  */
 exports.POLL_FAILURES_BEFORE_UNKNOWN = 3;
+/**
+ * Unreachable poll cycles before `receiver-offline` pages.
+ *
+ * The same count that makes one switch report No Response. Here it is one
+ * count for the receiver, and only a cycle that dialed and got no reply
+ * counts. A rejected command does not.
+ */
+exports.UNREACHABLE_POLLS_BEFORE_PAGE = exports.POLL_FAILURES_BEFORE_UNKNOWN;
 /**
  * How often to repeat the warn-level poll failure line. Without this a receiver
  * offline for days is represented by one log line from the moment it went down.

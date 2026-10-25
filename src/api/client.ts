@@ -67,6 +67,9 @@ const POWER_SET_RESPONSE_COMMANDS: readonly number[] = [COMMAND_RC5, COMMAND_POW
 /** Responses accepted after a source set: RC5 ack, or a following Source status. */
 const SOURCE_SET_RESPONSE_COMMANDS: readonly number[] = [COMMAND_RC5, COMMAND_SOURCE]
 
+/** What one exchange with the receiver meant for the offline page. */
+export type ExchangeResult = 'reply' | 'unreachable'
+
 export interface ConcertClientOptions {
   host: string
   port?: number
@@ -75,6 +78,11 @@ export interface ConcertClientOptions {
   logger?: PluginLogger
   /** Injected for tests; defaults to `net.createConnection`. */
   createConnection?: typeof net.createConnection
+  /**
+   * A frame arrived, or a dial failed. A query the breaker refused before
+   * dialing is not reported. Optional so the client stays usable without signals.
+   */
+  onExchange?: (result: ExchangeResult) => void
 }
 
 /** Options shared by the set methods. */
@@ -147,6 +155,7 @@ export class ConcertClient {
   private readonly requestTimeoutMs: number
   private readonly log: PluginLogger
   private readonly createConnection: typeof net.createConnection
+  private readonly onExchange?: (result: ExchangeResult) => void
   /** Coalesce concurrent volume queries for the same zone (poll fan-out). */
   private readonly volumeQueryInFlight = new Map<number, Promise<number>>()
   /** Coalesce concurrent source queries for the same zone (poll fan-out). */
@@ -178,6 +187,7 @@ export class ConcertClient {
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.log = options.logger ?? {}
     this.createConnection = options.createConnection ?? net.createConnection
+    this.onExchange = options.onExchange
   }
 
   /**
@@ -247,7 +257,27 @@ export class ConcertClient {
     throw new ConnectionError(
       `${this.host}:${this.port} unreachable for ${this.consecutiveQueryFailures} `
       + `consecutive queries; pausing polls for ${Math.ceil(cooldownRemaining / 1000)}s`,
+      { paused: true },
     )
+  }
+
+  /**
+   * Tell the offline page what this exchange was.
+   *
+   * No argument means a frame arrived. A paused query is not an exchange:
+   * the breaker returned before dialing.
+   */
+  private observeExchange(error?: Error): void {
+    if (this.onExchange === undefined) {
+      return
+    }
+    if (error === undefined || error instanceof ProtocolError) {
+      this.onExchange('reply')
+      return
+    }
+    if (error instanceof ConnectionError && !error.paused) {
+      this.onExchange('unreachable')
+    }
   }
 
   /** A completed exchange proves the receiver is reachable; reset the breaker. */
@@ -834,9 +864,9 @@ export class ConcertClient {
       return Promise.reject(new ConnectionError('Client is closed'))
     }
     if (isExpired(deadline)) {
-      return Promise.reject(
-        new ConnectionError(`Ran out of time waiting for ${host}:${port} to become ready`),
-      )
+      const error = new ConnectionError(`Ran out of time waiting for ${host}:${port} to become ready`)
+      this.observeExchange(error)
+      return Promise.reject(error)
     }
     this.log.debug?.(`→ ${host}:${port} ${formatFrame(request)}`)
 
@@ -851,13 +881,18 @@ export class ConcertClient {
         socket = this.createConnection({ host: connectHost, port })
       } catch (error) {
         // e.g. an option rejected by net before any socket/timer exists.
-        reject(new ConnectionError(`Connection to ${host}:${port} failed: ${describeError(error)}`, {
-          cause: error,
-        }))
+        const wrapped = new ConnectionError(
+          `Connection to ${host}:${port} failed: ${describeError(error)}`,
+          { cause: error },
+        )
+        this.observeExchange(wrapped)
+        reject(wrapped)
         return
       }
       if (!socket) {
-        reject(new ConnectionError(`Connection to ${host}:${port} produced no socket`))
+        const error = new ConnectionError(`Connection to ${host}:${port} produced no socket`)
+        this.observeExchange(error)
+        reject(error)
         return
       }
 
@@ -894,6 +929,7 @@ export class ConcertClient {
 
       const fail = (error: Error): void => {
         if (cleanup()) {
+          this.observeExchange(error)
           reject(error)
         }
       }
@@ -902,6 +938,7 @@ export class ConcertClient {
         if (!cleanup()) {
           return
         }
+        this.observeExchange()
         this.log.debug?.(
           `← ${host}:${port} cmd=0x${response.command.toString(16)} `
           + `answer=${describeAnswerCode(response.answerCode)} data=${formatFrame(response.data)}`,

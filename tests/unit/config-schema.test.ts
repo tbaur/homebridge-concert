@@ -79,6 +79,16 @@ describe('config.schema.json', () => {
     ]))
   })
 
+  it('offers Send Signals to PagerDuty next to the refresh rate, off by default', () => {
+    const prop = schema.schema.properties.options.properties.pagerdutySignals
+    expect(prop).toMatchObject({
+      title: 'Send Signals to PagerDuty',
+      type: 'boolean',
+      default: false,
+    })
+    expect(schema.layout).toContain('options.pagerdutySignals')
+  })
+
   it('package name matches PLUGIN_NAME', () => {
     // Keep the published package name and registerPlatform name in lockstep.
     const pkg = require('../../package.json') as { name: string }

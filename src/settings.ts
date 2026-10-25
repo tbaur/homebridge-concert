@@ -131,6 +131,15 @@ export const STATE_FRESHNESS_MS = 5_000
 export const POLL_FAILURES_BEFORE_UNKNOWN = 3
 
 /**
+ * Unreachable poll cycles before `receiver-offline` pages.
+ *
+ * The same count that makes one switch report No Response. Here it is one
+ * count for the receiver, and only a cycle that dialed and got no reply
+ * counts. A rejected command does not.
+ */
+export const UNREACHABLE_POLLS_BEFORE_PAGE = POLL_FAILURES_BEFORE_UNKNOWN
+
+/**
  * How often to repeat the warn-level poll failure line. Without this a receiver
  * offline for days is represented by one log line from the moment it went down.
  */
