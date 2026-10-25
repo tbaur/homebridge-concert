@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [2.1.0](https://github.com/tbaur/homebridge-concert/compare/v2.0.0...v2.1.0) (2026-10-25)
+
+
+### Features
+
+* page when the Concert receiver is unreachable ([8f0764f](https://github.com/tbaur/homebridge-concert/commit/8f0764fa1f8650fafb878e79821c9996b94d9fde))
+
 ## [2.0.0](https://github.com/tbaur/homebridge-concert/compare/v1.0.4...v2.0.0) (2026-09-05)
 
 
