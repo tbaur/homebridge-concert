@@ -15,6 +15,10 @@ A clear description of what the bug is.
 - **Homebridge version**: 
 - **Node.js version**: 
 - **Operating system**: 
+- **Receiver model**: e.g. Concert XR-8S
+- **Receiver setup**: Control setting, and Standby Mode
+- **Switch type**: power / volume preset / source preset
+- **Zone**: 1 or 2
 
 ## Steps to Reproduce
 
@@ -38,6 +42,14 @@ Paste relevant logs here
 ```
 
 </details>
+
+## Configuration
+
+Paste the Concert platform block with the host replaced by `192.168.1.50`.
+
+```
+Paste the Concert platform block here. Replace the host with 192.168.1.50.
+```
 
 ## Additional Context
 Any other context about the problem.

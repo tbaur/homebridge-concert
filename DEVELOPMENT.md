@@ -44,9 +44,9 @@ docs/
 ## Design principles
 
 - **Dependency-light by design.** The Homebridge plugin runtime uses Node's native `net` and pulls in no third-party runtime dependencies. `homebridge` is a dev-only dependency used for *types only* — there is no runtime `import`/`require` of it, so a CommonJS build never has to load an ESM-only host module. Anything needed at runtime (`HAPStatus`, `HapStatusError`, `Service`, `Characteristic`, `uuid`) comes from the injected `api.hap`. `npm audit --omit=dev` reports zero advisories.
-- **`@types/node` tracks the engines floor.** Pinned to the major matching `engines.node`, so the compiler rejects an API that would not exist on the oldest supported runtime. Bumping one without the other silently removes that guarantee.
+- **`@types/node` tracks the top of the engines range.** It is pinned to `^26` while `engines.node` is `^22 || ^24 || ^26`, so the compiler accepts a Node 26 API. The Node 22 job in CI is what catches an API the oldest supported runtime does not have.
 - **Compatibility claims are tested, not asserted.** `engines.homebridge` is `^2.0.0`, which is what the pinned devDependency type-checks and runs against. The deliberately loose `PlatformConfig` constructor parameter exists to keep that true.
-- **Dev-dependency hygiene.** Two `overrides` entries pin transitive dev dependencies away from known advisories: `js-yaml` to `^4.2.0`, and `brace-expansion` to `^5.0.12` (CVE-2026-102277 affects 4.x and 5.x below 5.0.12). Both are dev-only and never shipped. Use a floating minimum rather than an exact pin so a future advisory fix is picked up instead of held back.
+- **Dev-dependency hygiene.** Three `overrides` entries pin transitive dev dependencies away from known advisories: `js-yaml` to `^4.3.1`, `brace-expansion` to `^5.0.12` (CVE-2026-102277 affects 4.x and 5.x below 5.0.12), and `handlebars` to `^4.7.10`. All three are dev-only and never shipped. Use a floating minimum rather than an exact pin so a future advisory fix is picked up instead of held back.
 - **Pure logic is isolated** in `api/protocol.ts` and `utils/` so it is trivially unit-testable; the TCP client accepts an injectable `createConnection` for testing.
 - **Strict TypeScript**, plus `noUncheckedIndexedAccess` and `noImplicitOverride`. The first matters most in `api/protocol.ts`, which indexes into byte buffers straight off the wire. Tests relax it (they index fixtures they just defined) but nothing else.
 - **Type-aware linting.** `eslint.config.js` points at `tsconfig.test.json` so rules like `no-floating-promises` and `no-misused-promises` can run; `npm run lint` uses `--max-warnings 0`, so a warning is a failure rather than decoration.
@@ -120,13 +120,31 @@ npm run test:unit                     # unit tests only
 
 `npm install` does not build: there is no `prepare` script, because it would rewrite the committed `dist/` on every install and dirty the working tree. Run `npm run build` yourself and commit the result. Publishing is still safe — `prepublishOnly` cleans and rebuilds.
 
+## Run it in Homebridge
+
+Unit tests never open a socket. To try a build on a receiver, install this checkout and restart Homebridge with debug logging.
+
+```bash
+npm run build
+npm install -g .
+homebridge -D
+```
+
+`npm install -g .` updates the npm prefix of the shell you run it in. If Homebridge was installed with a different npm, run the install with that one, then restart Homebridge with debug logging.
+
+Start with a power switch. A volume preset On jumps to that step from any current level, so the first hardware check should be power, then a level you already use.
+
+Debug logs include the automation frames. They contain no secrets. When you add a command, confirm the query response before you ship a set. [docs/PROTOCOL.md](docs/PROTOCOL.md) is the catalog, and factory defaults (`0x05`) and PIN save/restore (`0x06`) stay out of HomeKit.
+
 ## Adding new capabilities
 
-1. Read [docs/PROTOCOL.md](docs/PROTOCOL.md) for the command catalog, RC5 codes, and verification notes.
+Do not edit `src/pagerduty-signals.ts`. It is a copy of the homebridge-pagerduty writer. Replace it by copying a newer version from that plugin's `docs/SIGNALS-AGENT.md`.
+
+1. Read [docs/PROTOCOL.md](docs/PROTOCOL.md) for the command catalog, RC5 codes, and verification notes. Try the query on a receiver before shipping a set. See [Run it in Homebridge](#run-it-in-homebridge).
 2. Add frame builders in `src/api/protocol.ts` (and parse response data as needed).
 3. Expose methods on `ConcertClient` in `src/api/client.ts` (pass `zone` per call).
 4. Add a device handler under `src/devices/`, extending `SwitchAccessory` (or `PresetSwitchAccessory` for "on when the zone matches a target" behavior) so it inherits state caching, race protection, and failure logging.
-5. Extend `accessories[].type` in `config.schema.json`, `ConcertAccessoryConfig`, and `validateConfig` / `resolveAccessories`. Give any new numeric field `minimum`/`maximum` in the schema when an out-of-range value is fatal, so the Homebridge UI cannot save a config the plugin refuses to start with.
+5. Extend `accessories[].type` in `config.schema.json`, `ConcertAccessoryConfig`, and `validateConfig` / `resolveAccessories`. When an out-of-range value is fatal, give a number `minimum`/`maximum` and a string `maxLength`, so the Homebridge UI cannot save a config the plugin refuses to start with.
 6. Wire construction in `platform.ts` (`createHandler` + UUID identity), adding the handler to `powerHandlers` or `presetHandlers` as appropriate.
 7. Add unit tests for protocol helpers, client, accessory path, and config validation.
 8. Update PROTOCOL.md mapping/status and FEATURES.md.

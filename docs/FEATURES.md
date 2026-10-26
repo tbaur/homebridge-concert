@@ -2,50 +2,65 @@
 
 **homebridge-concert**
 
-## Core Features
+A checklist of what is built. What a Home app user sees, including every log line, is in the [detailed documentation](README-DETAILED.md). The command catalog, including commands this plugin does not expose, is in [PROTOCOL.md](PROTOCOL.md).
 
-- ✅ Multi-accessory platform: configure one or more HomeKit Switches per receiver
-- ✅ Power on / standby (`type: power`)
-- ✅ Volume preset Switch (`type: volumePreset`) — On when volume equals a configured 0–99 level; set On sets that level (retries politely for up to 60s while waking; not-ready log after 30s); set Off is a no-op
-- ✅ Source / input preset Switch (`type: sourcePreset`) — On when the zone is on a configured input (e.g. CD); set On selects that input via RC5 (same wake retries as volume); set Off is a no-op
-- ✅ Per-accessory zone targeting (Zone 1 or Zone 2), including transparent resolution of Zone 2 "follow Zone 1"
-- ✅ LAN IP control over TCP port 50000 (AudioControl X/XR automation protocol)
-- ✅ Configurable state polling (90s default; below 5s falls back to the default, above 86400s is clamped)
-- ✅ Bounded connect and request timeouts with a capped response buffer
-- ✅ Whole-operation timeout budget on every set, covering post-ack verification
-- ✅ Sets answer inside HomeKit's ~9s write window and finish a slow wake in the background, pushing the real value when it lands
-- ✅ A set is only treated as confirmed by a reply that agrees with it, never by answer code alone
-- ✅ Short-lived TCP connections per command (no sticky idle sockets)
-- ✅ Serialized TCP commands (one in-flight socket) so standby does not see overlapping sessions
-- ✅ Startup config validation (fatal host/accessories errors; warn-and-default for port/refreshRate)
-- ✅ Stale-accessory cleanup when accessories are removed or identity changes; cached accessories are kept registered on invalid config so HomeKit rooms, scenes, and automations survive a typo
-- ✅ Accessory identity is independent of the receiver's address, so an IP change keeps your switches; accessories cached under the older address-based identity are adopted on upgrade rather than replaced
-- ✅ Set/poll race protection and single-flight refresh per accessory
-- ✅ Power polled before volume/source; presets polled together so same-zone queries share one request; overlapping ticks coalesce; volume and source polls skip while the zone is last known standby
-- ✅ Poll failures keep last known On (volume and source match power); no fake “(external)” flip on timeout recover
-- ✅ One automatic retry on transient power-, volume-, and source-query timeouts
-- ✅ Circuit breaker pauses polling of an unreachable receiver, escalating per cool-off rather than per query; HomeKit-initiated sets always still try
-- ✅ Optional PagerDuty signal (`options.pagerdutySignals`, default off): `receiver-offline` (error) after 3 poll cycles that dialed the receiver and got no reply. A rejected command or a standby reply clears it. A paused poll does not count. The summary does not include the host. See [PagerDuty](README-DETAILED.md#pagerduty).
-- ✅ A refused or unresolvable host fails fast instead of consuming the wake-retry window
-- ✅ Reports HomeKit “No Response” until real state has been observed, and again after repeated poll failures, instead of asserting an unconfirmed value
-- ✅ Presets report Off while the zone is in standby, and a successful set re-reads sibling switches so two levels or inputs are never both On
-- ✅ A HomeKit On write is only skipped as redundant while the cached reading is still fresh
-- ✅ Quiet consecutive poll failures after the first warn
-- ✅ Clean shutdown: in-flight requests fail immediately rather than running out their timeouts
+## Built
+
+### Switches
+
+- ✅ Power on / standby (`type: power`). On powers the zone. Off puts it into standby
+- ✅ Volume preset (`type: volumePreset`). On when the zone's volume equals a configured step, 0–99, the same number the receiver shows. Set On jumps to that step. Set Off leaves the level alone
+- ✅ Source preset (`type: sourcePreset`). On when the zone is on a configured input (for example CD). Set On selects it. Set Off leaves the input alone
+- ✅ As many switches as you need on one receiver, each aimed at Zone 1 or Zone 2
+- ✅ Zone 2 "follow Zone 1" is read through Zone 1, so a Zone 2 source switch still tracks the input you hear
+- ✅ `DISPLAY` is Zone 1 only. The plugin rejects it on Zone 2 and will not start
+- ✅ One receiver per Homebridge. A second receiver needs its own Homebridge
+
+### Reliability
+
+- ✅ LAN control on TCP port 50000. Each command opens a short-lived connection, sends one frame, reads one response, and closes
+- ✅ Commands run one at a time, so standby does not see overlapping sessions
+- ✅ Polling, default every 90 seconds. Below 5 seconds falls back to 90. Above 86400 seconds is clamped. Connect and response waits are 5 seconds each
+- ✅ A volume or source On shows On in HomeKit immediately and keeps trying for up to 60 seconds while the receiver wakes. The "receiver is not ready" log waits until that wake has already taken 30 seconds
+- ✅ The switch stays On only after a later read agrees with the set. An acknowledgement on its own is not enough
+- ✅ A host that refuses the connection, or cannot be resolved, fails the set immediately instead of using up the 60 second wake window
+- ✅ No Response until the receiver has been read, and again after three failed polls. One failure keeps the last known state
+- ✅ Volume and source presets report Off while the zone is in standby
+- ✅ Turning one preset On re-reads the others, so two volume levels or two inputs are never both On
+- ✅ A bad config leaves cached switches registered, so rooms, scenes, and automations survive a typo
+- ✅ Identity is the switch type, zone, and volume or source. The receiver's address is not part of it, so an IP change keeps the switches. Accessories cached under the older address-based identity are adopted on upgrade
+- ✅ Renaming a switch stays in place. Changing a preset's volume or source creates a new accessory and drops that switch's room and automations
+- ✅ After repeated connection failures, polling pauses. The pause starts at 30 seconds and doubles, up to 10 minutes. A HomeKit set still tries
+- ✅ The first poll failure in a streak is a warning. Later ones stay at debug for an hour, then warn again
+- ✅ Optional PagerDuty (`options.pagerdutySignals`, off by default): `receiver-offline` after 3 poll cycles that dialed the receiver and got no reply. A rejected command or a standby reply clears it. A paused poll does not count. Needs Node 22.13 or later. On an older Node 22 the plugin still runs and skips the page. See [PagerDuty](README-DETAILED.md#pagerduty)
+- ✅ A missing host, an empty accessory list, a name longer than 64 characters, or a duplicate identity is fatal. A bad port or refresh rate warns and uses the default or the clamp
+
+### Quality
+
+- ✅ Strict TypeScript, plus `noUncheckedIndexedAccess` and `noImplicitOverride`
+- ✅ Jest suite with an 80% coverage gate
+- ✅ No analytics
+- ✅ No runtime dependencies. The plugin uses Node's `net` module
 - ✅ Homebridge UI settings form via `config.schema.json`
 - ✅ Homebridge v2.0+ support
-- ✅ Node.js 22 / 24 / 26 support
+- ✅ Node.js 22, 24, and 26 support
 
-## Supported Devices
+## Out of scope
 
-| Type | HomeKit services |
-|------|------------------|
-| **AudioControl Concert XR** (e.g. XR-8S) | Switch (power), Switch (volume preset), Switch (source preset) |
+- ❌ Factory defaults (`0x05`) and PIN save/restore (`0x06`). Those commands can wipe or unlock the receiver. They stay out of HomeKit
+
+Mute, tone, tuner, and the rest of the family command catalog are listed in [PROTOCOL.md](PROTOCOL.md). A row there marked **No** is not a commitment to build it.
+
+## Accessories
+
+| Type | HomeKit service |
+|------|-----------------|
+| **AudioControl Concert XR** (tested: XR-8S) | Switch (power), Switch (volume preset), Switch (source preset) |
 
 ## Protocol surface
 
-Full automation command catalog (including capabilities not yet exposed in HomeKit): [PROTOCOL.md](PROTOCOL.md).
+Full automation command catalog, including capabilities not exposed in HomeKit: [PROTOCOL.md](PROTOCOL.md).
 
 ## Architecture
 
-See [DEVELOPMENT.md](../DEVELOPMENT.md) for the source layout and design principles.
+See [DEVELOPMENT.md](../DEVELOPMENT.md) for the source layout, the design principles, and how to run a build against a receiver.

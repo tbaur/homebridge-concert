@@ -54,12 +54,12 @@ Install and a short options table live in the [README](../README.md). This page 
 }
 ```
 
-Only one `Concert` platform block is supported, so one receiver per Homebridge instance.
+Only one `Concert` platform block is supported, so one receiver per Homebridge instance. A second receiver needs its own Homebridge.
 
 | Option | Required | Description |
 |--------|:--------:|-------------|
 | `name` | ✓ (UI) | Plugin instance name in the Homebridge log. Required by the Homebridge UI form. A hand-edited `config.json` that omits it falls back to `Concert`. |
-| `host` | ✓ | IP address or hostname of the receiver. Prefer a static address or a DHCP reservation. |
+| `host` | ✓ | IP address or hostname of the receiver. Do not include a port; use `port`. A value that includes a port is rejected and the plugin will not start. Prefer a static address or a DHCP reservation. |
 | `accessories` | ✓ | Non-empty list of HomeKit switches. |
 | `port` | | TCP control port. Default 50000. A value that is not a valid port logs a warning and falls back to 50000. |
 | `model` | | String shown in HomeKit Accessory Information. Default `AudioControl Concert XR-8S`. Longer than 64 characters, HomeKit truncates it. |
@@ -71,24 +71,24 @@ Only one `Concert` platform block is supported, so one receiver per Homebridge i
 | Field | Required | Description |
 |-------|:--------:|-------------|
 | `type` | ✓ | `power`, `volumePreset`, or `sourcePreset` |
-| `name` | ✓ | HomeKit display name |
+| `name` | ✓ | HomeKit display name, 64 characters or fewer. A longer name is rejected and the plugin will not start. Renaming a switch keeps its room and automations |
 | `zone` | | `1` (main, default) or `2` |
-| `volume` | for `volumePreset` | Absolute level `0`–`99` |
-| `source` | for `sourcePreset` | An input name from the list below. Case-insensitive. The Homebridge UI offers the uppercase form. |
+| `volume` | for `volumePreset` | The receiver's volume step, `0`–`99`, the same number it shows. Changing it creates a new accessory |
+| `source` | for `sourcePreset` | An input type from the list below. Case-insensitive. The Homebridge UI offers the uppercase form. `DISPLAY` is Zone 1 only |
 
-Source names: `CD`, `BD`, `AV`, `SAT`, `PVR`, `UHD`, `AUX`, `DISPLAY`, `FM`, `DAB`, `NET`, `STB`, `GAME`, `BT`.
+Source names: `CD`, `BD`, `AV`, `SAT`, `PVR`, `UHD`, `AUX`, `DISPLAY`, `FM`, `DAB`, `NET`, `STB`, `GAME`, `BT`. These are the receiver's input types. Match the type, even when the front panel shows a different label. `DISPLAY` on Zone 2 is rejected and the plugin will not start.
 
-Duplicate identity (same type, zone, and volume or source) is rejected at startup. A missing `host` or an empty `accessories` list is fatal. A bad port or refresh rate is not: the plugin warns and uses the default or the clamp.
+Duplicate identity (same type, zone, and volume or source) is rejected at startup. A missing `host`, an empty `accessories` list, an accessory name longer than 64 characters, or `DISPLAY` on Zone 2 is fatal. A bad port or refresh rate is not: the plugin warns and uses the default or the clamp.
 
 ## How switches work
 
 | Switch | On means | Set On | Set Off |
 |--------|----------|--------|---------|
 | Power | The zone is powered | Power the zone on | Put the zone into standby |
-| Volume preset | Volume equals the configured level | Set that level | Nothing. Off means "not at this level" |
-| Source preset | The zone is on the configured input | Select that input | Nothing. Off means "not on this input" |
+| Volume preset | Volume equals the configured step | Jump to that step | Nothing. The level on the receiver does not change. Off means "not at this step" |
+| Source preset | The zone is on the configured input | Select that input | Nothing. The input does not change. Off means "not on this input" |
 
-A volume or source set answers HomeKit immediately and finishes a slow wake in the background. The switch updates when the receiver accepts the command. A set counts only when a later read agrees with it. An acknowledgement code by itself is not enough.
+When you turn a volume or source switch On, HomeKit shows On immediately. The plugin keeps trying for up to 60 seconds while the receiver wakes. The switch stays On only after a later read shows that volume or input. An acknowledgement on its own is not enough.
 
 Turning one preset On re-reads the others, so two volume levels or two inputs are never both On.
 
@@ -102,7 +102,7 @@ Each switch targets Zone 1 or Zone 2. Zone 1 is the default.
 
 Zone 2 can report "follow Zone 1". The plugin reads Zone 1 and uses that input, so a Zone 2 source switch still tracks the input you hear.
 
-Match `source` to the name on the front panel, for example `CD`.
+Match `source` to the receiver's input type, for example `CD`, even when the front panel shows a different label.
 
 ## Accessory identity
 
@@ -147,7 +147,7 @@ Startup:
 
 ```text
 [Concert] Initializing Concert platform
-[Concert] homebridge-concert v2.0.0 → 192.168.1.50:50000 (AudioControl Concert XR-8S)
+[Concert] homebridge-concert v2.1.0 → 192.168.1.50:50000 (AudioControl Concert XR-8S)
 [Concert] Registering accessory "XR-8S Power" (z1:power) at 192.168.1.50:50000
 [Concert] Restored accessory "XR-8S Volume" (z1:vol:57) at 192.168.1.50:50000
 [Concert] Polling accessory state every 90s
@@ -207,6 +207,8 @@ The host in these lines is the one in your config. The examples use `192.168.1.5
 
 This plugin can page through [homebridge-pagerduty](https://github.com/tbaur/homebridge-pagerduty) when the receiver cannot be reached. It needs Node 22.13 or later. The setting is off until you turn it on.
 
+On Node older than 22.13 the plugin still starts. With the setting on, it still logs `homebridge-pagerduty support is enabled (receiver-offline)` before the first poll. The version check happens the first time a signal would be written. The log then says `PagerDuty signals need Node 22.13 or later; not writing signals`, and signals are skipped. The switches keep working.
+
 1. Turn on **Send Signals to PagerDuty** (`options.pagerdutySignals`) next to Refresh Rate.
 2. Restart Homebridge.
 3. In homebridge-pagerduty's settings, allow homebridge-concert to page, save, and restart Homebridge again. [Signals from other plugins](https://github.com/tbaur/homebridge-pagerduty/blob/main/docs/SIGNALS.md#let-a-plugin-page) explains each step and what else you can set for each signal.
@@ -219,7 +221,7 @@ A poll cycle counts once for the receiver, however many switches failed in it. T
 
 Standby is a reply. A command the receiver rejects is a reply. Either one clears the page. The summary does not include the host or a switch name: "Homebridge has not reached the Concert receiver. Its switches may show No Response."
 
-At startup the plugin logs one line, `homebridge-pagerduty support is enabled (receiver-offline)`, before the first poll. It is not logged when the setting is off or when startup validation failed. Shutdown closes the store and does not clear the signal.
+At startup the plugin logs one line, `homebridge-pagerduty support is enabled (receiver-offline)`, before the first poll. It is not logged when the setting is off or when startup validation failed. On Node older than 22.13 that line can still appear; the skip is logged on the first write, as described above. Shutdown closes the store and does not clear the signal.
 
 ## Troubleshooting
 
@@ -227,7 +229,7 @@ At startup the plugin logs one line, `homebridge-pagerduty support is enabled (r
 2. **Standby Mode** must be **IP and HDMI ON**, or the receiver will not answer while it is in standby.
 3. Confirm the host and port `50000` in the receiver's Network menu.
 4. Volume and source presets report Off while the zone is in standby. Power on first.
-5. Match `source` to the front-panel name, for example `CD`.
+5. Match `source` to the receiver's input type, for example `CD`, even when the front panel shows a different label. `DISPLAY` is Zone 1 only.
 6. Restart Homebridge after any config change, including a new switch.
 7. **No Response on every switch, with `Invalid configuration; plugin will not start until it is corrected.`** The log line above that one names the field. Fix it and restart. The switches stay in their rooms.
 8. **No Response right after a restart, with no config error.** Normal until the first poll. The plugin does not guess a state.
@@ -235,6 +237,7 @@ At startup the plugin logs one line, `homebridge-pagerduty support is enabled (r
 10. **A Shortcut turns power On and the volume switch does not follow.** The receiver often refuses volume and input for 15–20 seconds after power-on. The plugin retries for 60 seconds. The `receiver is not ready` line means that wait is still running.
 11. **The receiver's address changed.** Update `host`. Existing switches stay. The log says `receiver address changed`.
 12. **A preset disappeared from its room after a config edit.** Changing `volume` or `source` publishes a new accessory. Renaming does not.
+13. **Paging never happens.** Signals need Node 22.13 or later, homebridge-pagerduty installed, and homebridge-concert allowed in that plugin's settings. On an older Node 22 the startup line can still say support is enabled. The first time a signal would be written, the log says `PagerDuty signals need Node 22.13 or later; not writing signals`. The switches keep working.
 
 ## Related docs
 

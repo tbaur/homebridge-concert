@@ -46,6 +46,8 @@ This plugin opens a **short-lived TCP connection per command** (connect → one 
 
 Many status commands use data `0xF0` as a **query sentinel**.
 
+Codes that do not appear in the catalog below are not part of this page. Treat a gap as unknown, and confirm it against the vendor document before using it.
+
 ## Plugin mapping
 
 | Protocol capability | Plugin status | HomeKit `accessories[].type` |
@@ -71,8 +73,8 @@ Status: **Impl** = implemented in this plugin; **No** = not implemented (catalog
 | `0x02` | Headphones connected | Query `0xF0` | No | Family |
 | `0x03` | FM programme type | Query `0xF0` | No | Family |
 | `0x04` | Software version | Subsystem `0xF0`–`0xF5` | No | Family |
-| `0x05` | Factory defaults | `0xAA 0xAA` | No | Family |
-| `0x06` | Save/restore secure settings | Op + PIN | No | Family |
+| `0x05` | Factory defaults | `0xAA 0xAA`. Do not expose this in HomeKit. It can wipe the receiver | No | Family |
+| `0x06` | Save/restore secure settings | Op + PIN. Do not expose this in HomeKit | No | Family |
 | `0x08` | Simulate RC5 IR | `system`, `command` (2 data bytes) | Impl (power on/off + source select) | Verified |
 | `0x09` | Display information type | Mode / query `0xF0` | No | Family |
 
@@ -140,9 +142,25 @@ Request data: `[system, command]`.
 | **Power On (discrete)** | **`0x7B`** | **Impl** |
 | **Power Off (discrete)** | **`0x7C`** | **Impl** |
 | **Source: CD** | **`0x76`** (Z1) / **`0x06`** (Z2) | **Impl** |
-| Source keys (BD, SAT, NET, …) | see `src/api/sources.ts` | Impl |
 
-Catalogued HomeKit inputs and RC5 bytes: `src/api/sources.ts`. Full vendor tables remain in the official AudioControl / family protocol docs.
+HomeKit inputs. `src/api/sources.ts` must match this table. Full vendor tables remain in the official AudioControl / family protocol docs.
+
+| Input | Query `0x1D` | RC5 Zone 1 | RC5 Zone 2 | Status |
+|-------|--------------|------------|------------|--------|
+| CD | `0x01` | `0x76` | `0x06` | Impl |
+| BD | `0x02` | `0x62` | `0x07` | Impl |
+| AV | `0x03` | `0x5E` | `0x09` | Impl |
+| SAT | `0x04` | `0x1B` | `0x14` | Impl |
+| PVR | `0x05` | `0x60` | `0x0F` | Impl |
+| UHD | `0x06` | `0x7D` | `0x17` | Impl |
+| AUX | `0x08` | `0x63` | `0x0D` | Impl |
+| DISPLAY | `0x09` | `0x3A` | none (Zone 1 only) | Impl |
+| FM | `0x0B` | `0x1C` | `0x0E` | Impl |
+| DAB | `0x0C` | `0x48` | `0x10` | Impl |
+| NET | `0x0E` | `0x5C` | `0x13` | Impl |
+| STB | `0x10` | `0x64` | `0x08` | Impl |
+| GAME | `0x11` | `0x61` | `0x0B` | Impl |
+| BT | `0x12` | `0x7A` | `0x16` | Impl |
 
 ## Example frames
 
@@ -150,6 +168,12 @@ Power query (zone 1):
 
 ```text
 21 01 00 01 F0 0D
+```
+
+Power query response, zone 1, powered on. The byte after the command is the answer code (`0x00` = OK), then the data length, then the status (`0x01` = on, `0x00` = standby):
+
+```text
+21 01 00 00 01 01 0D
 ```
 
 RC5 Power On (zone 1):
@@ -184,7 +208,7 @@ RC5 Source CD (zone 1):
 
 ## Extending the plugin
 
-1. Confirm the command against the official protocol doc (and preferably a live XR unit).
+1. Confirm the command against the official protocol doc and a live XR unit. Try the query first. Debug logging prints the frames, and they contain no secrets. Do not add factory defaults (`0x05`) or PIN save/restore (`0x06`) as HomeKit accessories.
 2. Add builders/parsers in `src/api/protocol.ts`.
 3. Expose methods on `ConcertClient`.
 4. Add a HomeKit handler under `src/devices/` and a new `accessories[].type` (schema + validators).

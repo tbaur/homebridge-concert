@@ -16,6 +16,7 @@ You need **Node.js 22, 24, or 26** (the version range the plugin declares in `en
    ```bash
    npm install
    ```
+4. To try the plugin against a receiver, see [Run it in Homebridge](DEVELOPMENT.md#run-it-in-homebridge).
 
 ## Development Workflow
 
@@ -25,6 +26,7 @@ You need **Node.js 22, 24, or 26** (the version range the plugin declares in `en
 npm test              # Run all tests with coverage
 npm run lint          # Check code style
 npm run lint:fix      # Auto-fix style issues
+npx tsc --noEmit -p tsconfig.test.json  # src + tests
 ```
 
 ### Code Style
@@ -57,7 +59,9 @@ Follow [Conventional Commits](https://www.conventionalcommits.org). PR titles dr
 - `test:` - Test changes
 - `refactor:` - Code refactoring
 
-Example: `feat: add volume control for zone 1`
+Example: `feat: add a mute switch`
+
+The PR title is the changelog entry. Squash merge makes that title the commit release-please reads. See [RELEASING.md](RELEASING.md).
 
 ## Pull Request Process
 
@@ -73,7 +77,7 @@ Example: `feat: add volume control for zone 1`
 - [ ] Linting passes
 - [ ] `dist/` rebuilt and committed (`npm run build`)
 - [ ] Documentation updated
-- [ ] Descriptive PR title (Conventional Commits)
+- [ ] PR title is a Conventional Commit, because squash merge makes it the changelog entry
 
 ## Adding Device Support
 
@@ -85,6 +89,9 @@ Use the GitHub issue template. Include:
 - Homebridge version
 - Plugin version
 - Node.js version
+- Receiver model, and whether Control is IP and Standby Mode is IP and HDMI ON
+- Which switch (power, volume preset, or source preset) and which zone
+- The Concert platform block, with the host replaced by `192.168.1.50`
 - Steps to reproduce
 - Expected vs actual behavior
 - Relevant logs
