@@ -14,7 +14,7 @@ Control your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple HomeKit 
 
 ### Device Support
 - **Power switch:** On powers the zone; Off puts it into standby
-- **Volume preset switch:** On when volume equals a configured level (0–99). Set On sets that level. Set Off does nothing
+- **Volume preset switch:** On when volume equals a configured step (0–99, the same number the receiver shows). Set On jumps to that step. Set Off does nothing
 - **Source preset switch:** On when the zone is on a configured input (for example CD). Set On selects it. Set Off does nothing
 - **As many switches as you need** on one receiver, each aimed at Zone 1 or Zone 2
 
@@ -24,7 +24,7 @@ Control your **AudioControl Concert XR** receiver (e.g. XR-8S) in Apple HomeKit 
 - **Wake retries** on volume and source, so a Shortcut does not need a fixed wait
 - **No Response** until the receiver has been read, and again after repeated poll failures
 - **Bad config keeps your switches.** A bad host or accessory list leaves them registered so rooms, scenes, and automations survive
-- **PagerDuty** *(optional, off by default):* page when the receiver has been unreachable for 3 polls in a row
+- **PagerDuty** *(optional, off by default):* page when the receiver has been unreachable for 3 polls in a row. Needs Node 22.13 or later. On an older Node 22 the plugin still runs and skips the page. See [PagerDuty](docs/README-DETAILED.md#pagerduty)
 
 ### Quality
 - **Strict TypeScript** and a Jest suite with an 80% coverage gate
@@ -88,12 +88,12 @@ Switches appear in the Home app after restart. A listen Shortcut and the log lin
 
 ## Configuration Options
 
-Only one `Concert` platform block is supported, so one receiver per Homebridge instance.
+Only one `Concert` platform block is supported, so one receiver per Homebridge instance. A second receiver needs its own Homebridge.
 
 | Option | Required | Description |
 |--------|:--------:|-------------|
 | `name` | ✓ (UI) | Plugin instance name in the Homebridge log. A hand-edited config that omits it falls back to `Concert` |
-| `host` | ✓ | IP or hostname of the receiver |
+| `host` | ✓ | IP or hostname of the receiver. Do not include a port; use `port` |
 | `accessories` | ✓ | Non-empty list of HomeKit switches |
 | `port` | | TCP control port (default 50000) |
 | `model` | | Accessory Information model (default `AudioControl Concert XR-8S`) |
@@ -106,8 +106,9 @@ Accessory fields, input names, and what happens when you rename a switch or chan
 
 1. **Control** must be **IP**, and **Standby Mode** must be **IP and HDMI ON**.
 2. Confirm the host and port `50000` in the receiver's Network menu.
-3. **No Response** right after a restart is normal until the first poll. If the log says the configuration is invalid, the plugin has not started.
-4. **Restart Homebridge** after any config change.
+3. **No Response** right after a restart is normal until the first poll.
+4. If the log says the configuration is invalid, the plugin has not started. The switches stay in their rooms and show No Response until the config is fixed and Homebridge is restarted.
+5. **Restart Homebridge** after any config change.
 
 The [full troubleshooting list](docs/README-DETAILED.md#troubleshooting) covers presets in standby, a moved IP address, and polling that goes quiet on purpose.
 
@@ -118,7 +119,7 @@ The plugin talks only to the configured LAN address. There are no cloud credenti
 ## Requirements
 
 - Homebridge 2.x
-- Node.js 22, 24, or 26
+- Node.js 22, 24, or 26. PagerDuty signals need 22.13 or later; the rest of the plugin does not
 - An AudioControl Concert XR receiver with IP control enabled
 
 ## More Info

@@ -27,7 +27,7 @@ Maintainers have the right to remove, edit, or reject comments, commits, code, i
 
 ## Reporting
 
-Report issues to the project maintainers via GitHub issues or direct contact.
+Report conduct issues privately through the maintainer's GitHub profile, not in a public issue. Security vulnerabilities go through [private reporting](SECURITY.md).
 
 ## Attribution
 

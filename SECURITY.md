@@ -2,9 +2,12 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.x.x   | ✅ Active support  |
+| Version | Supported        |
+| ------- | ---------------- |
+| 2.x.x   | ✅ Supported     |
+| < 2.0   | ❌ Not supported |
+
+2.x requires Homebridge 2.x and Node.js 22, 24, or 26.
 
 ## Reporting a Vulnerability
 

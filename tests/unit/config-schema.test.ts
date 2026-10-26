@@ -54,6 +54,11 @@ describe('config.schema.json', () => {
     expect(keys).not.toContain('name')
   })
 
+  it('caps accessory names at 64 characters, because a longer name is fatal', () => {
+    const name = schema.schema.properties.accessories.items.properties.name
+    expect(name.maxLength).toBe(64)
+  })
+
   it('bounds volume so the UI cannot save a config the plugin rejects', () => {
     // An out-of-range volume is a fatal validation error, unlike port and
     // refreshRate which only warn and fall back.

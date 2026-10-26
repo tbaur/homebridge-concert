@@ -9,12 +9,14 @@ Releases are fully automated with [release-please](https://github.com/googleapis
 
    | PR title prefix | Example | Version bump |
    |---|---|---|
-   | `fix:` | `fix: handle timeout during power poll` | patch (0.1.0 → 0.1.1) |
-   | `feat:` | `feat: add volume control` | patch while pre-1.0 (0.1.0 → 0.1.1); minor once 1.x (1.0.0 → 1.1.0) |
-   | `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer | `feat!: drop Node 20` | minor while pre-1.0 (0.1.0 → 0.2.0); major once 1.x (1.0.0 → 2.0.0) |
+   | `fix:` | `fix: handle timeout during power poll` | patch (2.1.0 → 2.1.1) |
+   | `feat:` | `feat: add a mute switch` | minor (2.1.0 → 2.2.0) |
+   | `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer | `feat!: drop Node 22` | major (2.1.0 → 3.0.0) |
    | `chore:`, `docs:`, `refactor:`, `test:`, `ci:` | `docs: fix typo` | no release |
 
-   Pre-1.0 bumps are damped by `bump-minor-pre-major` and `bump-patch-for-minor-pre-major` in `release-please-config.json`; the parenthesized 1.x behavior applies automatically once the first 1.0.0 is cut.
+   The PR title is the changelog entry. With squash merges, that title is the commit release-please reads.
+
+   `bump-minor-pre-major` and `bump-patch-for-minor-pre-major` in `release-please-config.json` only affect a 0.x line. They do not change 2.x bumps.
 
 3. The **Tests** workflow runs on the PR (matrix: Node 22, 24, 26, plus an `npm audit` security job), alongside the **OSV-Scanner** workflow's PR scan. The PR is squash-merged to `main`.
 4. **release-please** opens or updates a **Release PR** titled `chore(main): release X.Y.Z`. It carries the version bump in `package.json` and the generated `CHANGELOG.md` entries. Multiple code PRs merged before a release are batched into one Release PR.
