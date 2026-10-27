@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [2.1.1](https://github.com/tbaur/homebridge-concert/compare/v2.1.0...v2.1.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* keep one control connection so polling does not wedge the receiver ([94abc7c](https://github.com/tbaur/homebridge-concert/commit/94abc7c832f79f6970582c5d1937f3b7e7987ab4))
+
 ## [2.1.0](https://github.com/tbaur/homebridge-concert/compare/v2.0.0...v2.1.0) (2026-10-25)
 
 
