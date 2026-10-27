@@ -434,7 +434,7 @@ describe('ConcertPlatform', () => {
     await settleRefresh()
 
     // Sequential refresh would let each preset finish before the next started,
-    // defeating the client's in-flight coalescing and costing one socket each.
+    // defeating the client's in-flight coalescing and costing one query each.
     expect(peakConcurrentVolumeQueries).toBe(2)
     api.emit('shutdown')
   })

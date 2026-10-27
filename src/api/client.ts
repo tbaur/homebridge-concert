@@ -6,9 +6,11 @@
  *
  * @fileoverview TCP client for AudioControl Concert X/XR series IP automation control.
  *
- * Opens a short-lived connection per request. That keeps the client simple and
- * avoids sticky half-open sockets if the receiver drops idle clients in standby.
- * Commands are serialized so standby does not see overlapping TCP sessions.
+ * Keeps one TCP connection and sends every command on it. A fresh socket per
+ * command, closed with a reset, leaks slots in the XR control stack. Standby
+ * does not reset that stack; only a full power-off does. The socket is dropped
+ * if the peer closes it or a request times out, and the next command dials.
+ * Commands are serialized so two requests are never in flight together.
  */
 
 import net from 'node:net'
@@ -143,6 +145,46 @@ function boundedTimeout(configuredMs: number, deadline: Deadline): number {
 }
 
 /**
+ * How long a quiet control socket waits before TCP keepalive probes.
+ *
+ * Polls already write on this socket, so probes only matter when the receiver
+ * reboots or drops the session without a FIN. Without them the next command
+ * would sit until its response timeout.
+ */
+const CONTROL_SOCKET_KEEPALIVE_MS = 30_000
+
+/** One in-flight exchange on the shared control socket. */
+interface PendingExchange {
+  zone: number
+  accepted: readonly number[]
+  confirms?: (response: ProtocolResponse) => boolean
+  /** `host:port zone N`, the text operators see in timeout lines. */
+  target: string
+  /** False until the request bytes have been written. Earlier frames are stale. */
+  armed: boolean
+  settled: boolean
+  session?: ControlSession
+  connectTimer?: ReturnType<typeof setTimeout>
+  requestTimer?: ReturnType<typeof setTimeout>
+  abort: (error: Error) => void
+  resolve: (response: ProtocolResponse) => void
+  reject: (error: Error) => void
+}
+
+/** The receiver's control connection, reused until it fails. */
+interface ControlSession {
+  socket: net.Socket
+  buffer: Buffer
+  dropped: boolean
+  pending?: PendingExchange
+  onConnect?: () => void
+  onData: (chunk: Buffer) => void
+  onError: (error: Error) => void
+  onClose: () => void
+  onEnd: () => void
+}
+
+/**
  * Sends framed automation commands to an AudioControl Concert receiver over TCP.
  */
 export class ConcertClient {
@@ -164,6 +206,8 @@ export class ConcertClient {
   private readonly lastPowerByZone = new Map<number, { on: boolean; seenAt: number }>()
   /** Cancels for in-flight requests, invoked by {@link close}. */
   private readonly inFlightAborts = new Set<(reason: Error) => void>()
+  /** Open control connection. Absent after a timeout, error, or peer close. */
+  private session?: ControlSession
   /** Aborts pending retry sleeps and in-flight requests on shutdown. */
   private readonly shutdown = new AbortController()
   private isClosed = false
@@ -239,6 +283,9 @@ export class ConcertClient {
       abort(new ConnectionError('Client closed before the request completed'))
     }
     this.inFlightAborts.clear()
+    if (this.session) {
+      this.retireSession(this.session)
+    }
   }
 
   /**
@@ -346,8 +393,9 @@ export class ConcertClient {
   }
 
   /**
-   * Retry a ConnectionError once — XR units sometimes accept TCP then stay
-   * silent for a single request before answering normally.
+   * Retry a ConnectionError once. XR units sometimes accept TCP then stay
+   * silent for a single request. The silent socket is dropped first, so this
+   * dials again instead of writing into a connection that already went quiet.
    */
   private async withQueryRetry<T>(
     operation: string,
@@ -829,19 +877,18 @@ export class ConcertClient {
   }
 
   /**
-   * Open a TCP connection, write one request frame, and resolve with the first
-   * matching response frame. Always closes the socket afterward.
+   * Write one request frame on the shared control socket and resolve with the
+   * first matching response. The socket stays open. A timeout, error, or peer
+   * close drops it so the next command dials again.
    *
    * @param expectedCommands - Accept the first response whose command is in this list
    *   (RC5 set may reply with 0x08, and often also emits a Power 0x00 status)
    * @param zone - Zone expected on matching response frames
-   */
-  /**
-   * @param confirms - Optional extra test a candidate frame must pass. A set is
-   *   allowed to be acknowledged by a following *status* frame, so the payload
-   *   has to agree with what was asked; a frame that reports the opposite state
-   *   is discarded like any other unmatched frame, which routes the ambiguity
-   *   into the settle-and-verify path rather than reporting a false success.
+   * @param options.confirms - Extra test a candidate frame must pass. A set may
+   *   be acknowledged by a following status frame, so the payload has to agree
+   *   with what was asked. A frame reporting the opposite state is discarded,
+   *   which routes the ambiguity into settle-and-verify rather than caching
+   *   the inverse of reality.
    */
   private send(
     request: Buffer,
@@ -850,7 +897,7 @@ export class ConcertClient {
     options: SendOptions = {},
   ): Promise<ProtocolResponse> {
     const { deadline, confirms } = options
-    const { host, port, connectHost } = this
+    const { host, port } = this
     // Not `Array.isArray`: it narrows a readonly tuple to `any[]`, which would
     // make the `accepted.includes` check below unchecked in a strict codebase.
     const accepted: readonly number[] = typeof expectedCommands === 'number'
@@ -871,174 +918,358 @@ export class ConcertClient {
     this.log.debug?.(`→ ${host}:${port} ${formatFrame(request)}`)
 
     return new Promise((resolve, reject) => {
-      let settled = false
-      let buffer = Buffer.alloc(0)
-      let connectTimer: ReturnType<typeof setTimeout> | undefined
-      let requestTimer: ReturnType<typeof setTimeout> | undefined
-
-      let socket: net.Socket
-      try {
-        socket = this.createConnection({ host: connectHost, port })
-      } catch (error) {
-        // e.g. an option rejected by net before any socket/timer exists.
-        const wrapped = new ConnectionError(
-          `Connection to ${host}:${port} failed: ${describeError(error)}`,
-          { cause: error },
-        )
-        this.observeExchange(wrapped)
-        reject(wrapped)
-        return
+      const pending: PendingExchange = {
+        zone,
+        accepted,
+        confirms,
+        target: `${host}:${port} zone ${zone}`,
+        armed: false,
+        settled: false,
+        abort: () => undefined,
+        resolve,
+        reject,
       }
-      if (!socket) {
-        const error = new ConnectionError(`Connection to ${host}:${port} produced no socket`)
-        this.observeExchange(error)
-        reject(error)
-        return
+      const abort = (error: Error): void => {
+        this.rejectPending(pending, error)
       }
-
-      const target = `${host}:${port} zone ${zone}`
-
-      /** Detach this request's listeners and close the socket. Runs exactly once. */
-      const cleanup = (): boolean => {
-        if (settled) {
-          return false
-        }
-        settled = true
-        if (connectTimer) {
-          clearTimeout(connectTimer)
-        }
-        if (requestTimer) {
-          clearTimeout(requestTimer)
-        }
-        this.inFlightAborts.delete(abort)
-        // Remove only what this request added; `removeAllListeners()` would also
-        // strip the listeners net.Socket installs for its own lifecycle.
-        socket.off('connect', onConnect)
-        socket.off('data', onData)
-        socket.off('error', onError)
-        socket.off('close', onClose)
-        // A destroyed socket can still emit a queued 'error' (ECONNRESET/EPIPE).
-        // Node rethrows 'error' when nothing is listening, which would take down
-        // the whole Homebridge process.
-        socket.on('error', (late: Error) => {
-          this.log.debug?.(`Socket error after teardown for ${target}: ${late.message}`)
-        })
-        socket.destroy()
-        return true
-      }
-
-      const fail = (error: Error): void => {
-        if (cleanup()) {
-          this.observeExchange(error)
-          reject(error)
-        }
-      }
-
-      const succeed = (response: ProtocolResponse): void => {
-        if (!cleanup()) {
-          return
-        }
-        this.observeExchange()
-        this.log.debug?.(
-          `← ${host}:${port} cmd=0x${response.command.toString(16)} `
-          + `answer=${describeAnswerCode(response.answerCode)} data=${formatFrame(response.data)}`,
-        )
-        resolve(response)
-      }
-
-      const abort = fail
-
-      const onError = (error: Error): void => {
-        fail(new ConnectionError(`Connection to ${target} failed: ${error.message}`, {
-          cause: error,
-        }))
-      }
-
-      const onClose = (): void => {
-        fail(new ConnectionError(`Connection to ${target} closed before a response arrived`))
-      }
-
-      const onConnect = (): void => {
-        if (connectTimer) {
-          clearTimeout(connectTimer)
-          connectTimer = undefined
-        }
-        // Recomputed here so connect + response together stay inside the budget.
-        requestTimer = setTimeout(() => {
-          fail(new ConnectionError(
-            `Timed out waiting for a response from ${target}${describePartialResponse(buffer)}`,
-          ))
-        }, boundedTimeout(this.requestTimeoutMs, deadline))
-
-        socket.write(request, (writeError) => {
-          if (writeError) {
-            fail(new ConnectionError(`Failed to write to ${target}: ${writeError.message}`, {
-              cause: writeError,
-            }))
-          }
-        })
-      }
-
-      const onData = (chunk: Buffer): void => {
-        buffer = Buffer.concat([buffer, chunk])
-
-        // Drain frames until we find one that matches the request, or run out.
-        let remaining = buffer
-        while (remaining.length > 0) {
-          const parsed = tryParseResponse(remaining)
-          if (!parsed) {
-            // Nothing parseable yet: drop any bytes before the first start byte
-            // so noise from a misbehaving peer cannot accumulate and be
-            // rescanned on every subsequent chunk.
-            const nextStart = remaining.indexOf(FRAME_START)
-            buffer = nextStart < 0 ? Buffer.alloc(0) : remaining.subarray(nextStart)
-            break
-          }
-          remaining = remaining.subarray(parsed.consumed)
-          buffer = remaining
-
-          const { response } = parsed
-          if (response.zone !== zone || !accepted.includes(response.command)) {
-            const expected = accepted.map((cmd) => `0x${cmd.toString(16)}`).join('|')
-            this.log.debug?.(
-              `Ignoring unmatched frame zone=${response.zone} cmd=0x${response.command.toString(16)} `
-              + `(expected zone=${zone} cmd=${expected})`,
-            )
-            continue
-          }
-          // Only an OK frame needs its payload checked. A non-OK answer code is
-          // a definitive rejection and must reach `assertOk` rather than being
-          // discarded as unconfirming, which would turn it into a timeout.
-          if (confirms && response.answerCode === ANSWER_OK && !confirms(response)) {
-            this.log.debug?.(
-              'Ignoring frame that does not confirm the request: cmd=0x'
-              + `${response.command.toString(16)} data=${formatFrame(response.data)}`,
-            )
-            continue
-          }
-          succeed(response)
-          return
-        }
-
-        // Checked after draining so a valid frame at the head of an oversized
-        // chunk is still honored; only unparseable residue trips the cap.
-        if (buffer.length > MAX_RESPONSE_BUFFER_BYTES) {
-          fail(new ProtocolError(
-            `Response from ${target} exceeded ${MAX_RESPONSE_BUFFER_BYTES} bytes`,
-          ))
-        }
-      }
-
+      pending.abort = abort
       this.inFlightAborts.add(abort)
-      connectTimer = setTimeout(() => {
-        fail(new ConnectionError(`Timed out connecting to ${target}`))
-      }, boundedTimeout(this.connectTimeoutMs, deadline))
-
-      socket.once('connect', onConnect)
-      socket.on('data', onData)
-      socket.once('error', onError)
-      socket.once('close', onClose)
+      this.startExchange(pending, request, deadline)
     })
+  }
+
+  /** Reuse the open socket, or dial when the last one was dropped. */
+  private startExchange(pending: PendingExchange, request: Buffer, deadline: Deadline): void {
+    const existing = this.usableSession()
+    if (existing) {
+      this.armAndWrite(existing, pending, request, deadline)
+      return
+    }
+    this.dial(pending, request, deadline)
+  }
+
+  /**
+   * The live session, or `undefined` when there is nothing worth writing to.
+   * A socket the peer already killed is retired here so its listeners do not
+   * linger after {@link dial} replaces it.
+   */
+  private usableSession(): ControlSession | undefined {
+    const session = this.session
+    if (!session) {
+      return undefined
+    }
+    const alive = !session.dropped
+      && session.socket.destroyed !== true
+      && session.socket.writable !== false
+    if (alive) {
+      return session
+    }
+    this.retireSession(session)
+    return undefined
+  }
+
+  /** Open a new control connection for `pending` and write once it connects. */
+  private dial(pending: PendingExchange, request: Buffer, deadline: Deadline): void {
+    const { host, port, connectHost } = this
+    let socket: net.Socket
+    try {
+      socket = this.createConnection({ host: connectHost, port })
+    } catch (error) {
+      // e.g. an option rejected by net before any socket/timer exists.
+      this.rejectPending(pending, new ConnectionError(
+        `Connection to ${host}:${port} failed: ${describeError(error)}`,
+        { cause: error },
+      ))
+      return
+    }
+    if (!socket) {
+      this.rejectPending(pending, new ConnectionError(
+        `Connection to ${host}:${port} produced no socket`,
+      ))
+      return
+    }
+
+    const session = this.bindSession(socket)
+    this.session = session
+    pending.session = session
+    session.pending = pending
+
+    const onConnect = (): void => {
+      socket.off('connect', onConnect)
+      if (pending.connectTimer) {
+        clearTimeout(pending.connectTimer)
+        pending.connectTimer = undefined
+      }
+      this.armAndWrite(session, pending, request, deadline)
+    }
+    session.onConnect = onConnect
+    pending.connectTimer = setTimeout(() => {
+      this.rejectPending(pending, new ConnectionError(`Timed out connecting to ${pending.target}`))
+    }, boundedTimeout(this.connectTimeoutMs, deadline))
+
+    socket.on('connect', onConnect)
+    socket.on('data', session.onData)
+    socket.on('error', session.onError)
+    socket.on('close', session.onClose)
+    socket.on('end', session.onEnd)
+  }
+
+  /** Attach the session's listeners. They stay for the life of the socket. */
+  private bindSession(socket: net.Socket): ControlSession {
+    // Test fakes are EventEmitters, not real sockets, and lack these.
+    const withOptions = socket as Partial<Pick<net.Socket, 'setNoDelay' | 'setKeepAlive'>>
+    withOptions.setNoDelay?.(true)
+    withOptions.setKeepAlive?.(true, CONTROL_SOCKET_KEEPALIVE_MS)
+
+    const session: ControlSession = {
+      socket,
+      buffer: Buffer.alloc(0),
+      dropped: false,
+      onData: () => undefined,
+      onError: () => undefined,
+      onClose: () => undefined,
+      onEnd: () => undefined,
+    }
+    session.onData = (chunk: Buffer) => {
+      this.handleData(session, chunk)
+    }
+    session.onError = (error: Error) => {
+      this.handleSocketError(session, error)
+    }
+    session.onClose = () => {
+      this.handleSocketClose(session)
+    }
+    session.onEnd = () => {
+      this.handleSocketClose(session)
+    }
+    return session
+  }
+
+  /** Arm the response timer and write. Stale bytes from earlier traffic are dropped. */
+  private armAndWrite(
+    session: ControlSession,
+    pending: PendingExchange,
+    request: Buffer,
+    deadline: Deadline,
+  ): void {
+    if (pending.settled || session.dropped) {
+      return
+    }
+    session.pending = pending
+    pending.session = session
+    // Anything already buffered arrived before this request. Matching it would
+    // report whatever the receiver said last, not the answer to this write.
+    session.buffer = Buffer.alloc(0)
+    pending.armed = true
+    // Recomputed here so connect + response together stay inside the budget.
+    pending.requestTimer = setTimeout(() => {
+      this.rejectPending(pending, new ConnectionError(
+        `Timed out waiting for a response from ${pending.target}`
+        + `${describePartialResponse(session.buffer)}`,
+      ))
+    }, boundedTimeout(this.requestTimeoutMs, deadline))
+
+    session.socket.write(request, (writeError) => {
+      if (!writeError || pending.settled) {
+        return
+      }
+      this.rejectPending(pending, new ConnectionError(
+        `Failed to write to ${pending.target}: ${writeError.message}`,
+        { cause: writeError },
+      ))
+    })
+  }
+
+  /** Fold `chunk` into the session buffer and take the first frame that matches. */
+  private handleData(session: ControlSession, chunk: Buffer): void {
+    if (session.dropped) {
+      return
+    }
+    session.buffer = Buffer.concat([session.buffer, chunk])
+    let remaining = session.buffer
+    while (remaining.length > 0) {
+      const parsed = tryParseResponse(remaining)
+      if (!parsed) {
+        // Drop bytes before the first start byte so noise cannot accumulate
+        // and be rescanned on every subsequent chunk.
+        const nextStart = remaining.indexOf(FRAME_START)
+        session.buffer = nextStart < 0 ? Buffer.alloc(0) : remaining.subarray(nextStart)
+        break
+      }
+      remaining = remaining.subarray(parsed.consumed)
+      session.buffer = remaining
+      if (this.acceptFrame(session, parsed.response)) {
+        return
+      }
+    }
+
+    // Checked after draining so a valid frame at the head of an oversized
+    // chunk is still honored; only unparseable residue trips the cap.
+    if (!session.dropped && session.buffer.length > MAX_RESPONSE_BUFFER_BYTES) {
+      this.failOversized(session)
+    }
+  }
+
+  /**
+   * Apply one parsed frame to the in-flight exchange.
+   *
+   * @returns true when the exchange is complete and the caller should stop
+   */
+  private acceptFrame(session: ControlSession, response: ProtocolResponse): boolean {
+    const pending = session.pending
+    if (!pending?.armed || pending.settled) {
+      this.log.debug?.(
+        `Ignoring unsolicited frame cmd=0x${response.command.toString(16)} `
+        + `from ${this.host}:${this.port}`,
+      )
+      return false
+    }
+    if (response.zone !== pending.zone || !pending.accepted.includes(response.command)) {
+      const expected = pending.accepted.map((cmd) => `0x${cmd.toString(16)}`).join('|')
+      this.log.debug?.(
+        `Ignoring unmatched frame zone=${response.zone} cmd=0x${response.command.toString(16)} `
+        + `(expected zone=${pending.zone} cmd=${expected})`,
+      )
+      return false
+    }
+    // Only an OK frame needs its payload checked. A non-OK answer code is a
+    // definitive rejection and must reach `assertOk` rather than being
+    // discarded as unconfirming, which would turn it into a timeout.
+    if (pending.confirms && response.answerCode === ANSWER_OK && !pending.confirms(response)) {
+      this.log.debug?.(
+        'Ignoring frame that does not confirm the request: cmd=0x'
+        + `${response.command.toString(16)} data=${formatFrame(response.data)}`,
+      )
+      return false
+    }
+    this.succeedPending(pending, response)
+    return true
+  }
+
+  /** Give up on a stream that will never parse. Drops the socket either way. */
+  private failOversized(session: ControlSession): void {
+    const pending = session.pending
+    const target = pending?.target ?? `${this.host}:${this.port}`
+    const error = new ProtocolError(
+      `Response from ${target} exceeded ${MAX_RESPONSE_BUFFER_BYTES} bytes`,
+    )
+    if (pending && !pending.settled) {
+      this.rejectPending(pending, error)
+      return
+    }
+    this.retireSession(session)
+  }
+
+  /** Complete the exchange and leave the socket open for the next command. */
+  private succeedPending(pending: PendingExchange, response: ProtocolResponse): void {
+    if (pending.settled) {
+      return
+    }
+    pending.settled = true
+    this.clearPendingTimers(pending)
+    this.inFlightAborts.delete(pending.abort)
+    if (pending.session) {
+      pending.session.pending = undefined
+    }
+    this.observeExchange()
+    this.log.debug?.(
+      `← ${this.host}:${this.port} cmd=0x${response.command.toString(16)} `
+      + `answer=${describeAnswerCode(response.answerCode)} data=${formatFrame(response.data)}`,
+    )
+    pending.resolve(response)
+  }
+
+  /**
+   * Fail the exchange and drop the socket.
+   *
+   * A socket that timed out or reset is not reused. The query retry then dials
+   * a new one, which is what actually recovers after the receiver goes silent.
+   */
+  private rejectPending(pending: PendingExchange, error: Error): void {
+    if (pending.settled) {
+      return
+    }
+    pending.settled = true
+    this.clearPendingTimers(pending)
+    this.inFlightAborts.delete(pending.abort)
+    const session = pending.session
+    if (session) {
+      session.pending = undefined
+      this.retireSession(session)
+    }
+    this.observeExchange(error)
+    pending.reject(error)
+  }
+
+  private clearPendingTimers(pending: PendingExchange): void {
+    if (pending.connectTimer) {
+      clearTimeout(pending.connectTimer)
+      pending.connectTimer = undefined
+    }
+    if (pending.requestTimer) {
+      clearTimeout(pending.requestTimer)
+      pending.requestTimer = undefined
+    }
+  }
+
+  private handleSocketError(session: ControlSession, error: Error): void {
+    const pending = session.pending
+    if (pending && !pending.settled) {
+      this.rejectPending(pending, new ConnectionError(
+        `Connection to ${pending.target} failed: ${error.message}`,
+        { cause: error },
+      ))
+      return
+    }
+    this.log.debug?.(
+      `Control connection to ${this.host}:${this.port} failed: ${error.message}`,
+    )
+    this.retireSession(session)
+  }
+
+  private handleSocketClose(session: ControlSession): void {
+    if (session.dropped) {
+      return
+    }
+    const pending = session.pending
+    if (pending && !pending.settled) {
+      this.rejectPending(pending, new ConnectionError(
+        `Connection to ${pending.target} closed before a response arrived`,
+      ))
+      return
+    }
+    this.retireSession(session)
+  }
+
+  /**
+   * Forget `session` and destroy its socket.
+   *
+   * Listeners this session added are removed first. `destroy()` can still emit
+   * `error`, and Node rethrows that when nothing is listening, which would take
+   * down the whole Homebridge process. `removeAllListeners()` is not used: it
+   * would also strip the listeners net.Socket installs for its own lifecycle.
+   */
+  private retireSession(session: ControlSession): void {
+    if (session.dropped) {
+      return
+    }
+    session.dropped = true
+    if (this.session === session) {
+      this.session = undefined
+    }
+    session.pending = undefined
+    const { socket } = session
+    if (session.onConnect) {
+      socket.off('connect', session.onConnect)
+    }
+    socket.off('data', session.onData)
+    socket.off('error', session.onError)
+    socket.off('close', session.onClose)
+    socket.off('end', session.onEnd)
+    socket.on('error', (late: Error) => {
+      this.log.debug?.(`Socket error after teardown for ${this.host}:${this.port}: ${late.message}`)
+    })
+    socket.destroy()
   }
 }
 

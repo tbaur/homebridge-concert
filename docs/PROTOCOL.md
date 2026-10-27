@@ -16,7 +16,7 @@ Reference for the binary IP/RS232 control surface used by AudioControl Concert X
 | IP port | `50000` |
 | Receiver setup | **Control → IP**; **Standby Mode → IP and HDMI ON** so the unit answers while in standby |
 
-This plugin opens a **short-lived TCP connection per command** (connect → one request → one matching response → close).
+This plugin keeps **one TCP connection** and sends each command on it. The socket stays open until the receiver closes it or a request times out; the next command connects again.
 
 ## Wire format
 

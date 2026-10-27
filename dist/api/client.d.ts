@@ -6,9 +6,11 @@
  *
  * @fileoverview TCP client for AudioControl Concert X/XR series IP automation control.
  *
- * Opens a short-lived connection per request. That keeps the client simple and
- * avoids sticky half-open sockets if the receiver drops idle clients in standby.
- * Commands are serialized so standby does not see overlapping TCP sessions.
+ * Keeps one TCP connection and sends every command on it. A fresh socket per
+ * command, closed with a reset, leaks slots in the XR control stack. Standby
+ * does not reset that stack; only a full power-off does. The socket is dropped
+ * if the peer closes it or a request times out, and the next command dials.
+ * Commands are serialized so two requests are never in flight together.
  */
 import net from 'node:net';
 import type { PluginLogger } from '../types';
@@ -62,6 +64,8 @@ export declare class ConcertClient {
     private readonly lastPowerByZone;
     /** Cancels for in-flight requests, invoked by {@link close}. */
     private readonly inFlightAborts;
+    /** Open control connection. Absent after a timeout, error, or peer close. */
+    private session?;
     /** Aborts pending retry sleeps and in-flight requests on shutdown. */
     private readonly shutdown;
     private isClosed;
@@ -130,8 +134,9 @@ export declare class ConcertClient {
     /** Run `fn` with exclusive access to the TCP send path. */
     private withExclusive;
     /**
-     * Retry a ConnectionError once — XR units sometimes accept TCP then stay
-     * silent for a single request before answering normally.
+     * Retry a ConnectionError once. XR units sometimes accept TCP then stay
+     * silent for a single request. The silent socket is dropped first, so this
+     * dials again instead of writing into a connection that already went quiet.
      */
     private withQueryRetry;
     /** Retry sleep that wakes early on shutdown and never holds the event loop open. */
@@ -249,21 +254,65 @@ export declare class ConcertClient {
     private verifyState;
     private assertOk;
     /**
-     * Open a TCP connection, write one request frame, and resolve with the first
-     * matching response frame. Always closes the socket afterward.
+     * Write one request frame on the shared control socket and resolve with the
+     * first matching response. The socket stays open. A timeout, error, or peer
+     * close drops it so the next command dials again.
      *
      * @param expectedCommands - Accept the first response whose command is in this list
      *   (RC5 set may reply with 0x08, and often also emits a Power 0x00 status)
      * @param zone - Zone expected on matching response frames
-     */
-    /**
-     * @param confirms - Optional extra test a candidate frame must pass. A set is
-     *   allowed to be acknowledged by a following *status* frame, so the payload
-     *   has to agree with what was asked; a frame that reports the opposite state
-     *   is discarded like any other unmatched frame, which routes the ambiguity
-     *   into the settle-and-verify path rather than reporting a false success.
+     * @param options.confirms - Extra test a candidate frame must pass. A set may
+     *   be acknowledged by a following status frame, so the payload has to agree
+     *   with what was asked. A frame reporting the opposite state is discarded,
+     *   which routes the ambiguity into settle-and-verify rather than caching
+     *   the inverse of reality.
      */
     private send;
+    /** Reuse the open socket, or dial when the last one was dropped. */
+    private startExchange;
+    /**
+     * The live session, or `undefined` when there is nothing worth writing to.
+     * A socket the peer already killed is retired here so its listeners do not
+     * linger after {@link dial} replaces it.
+     */
+    private usableSession;
+    /** Open a new control connection for `pending` and write once it connects. */
+    private dial;
+    /** Attach the session's listeners. They stay for the life of the socket. */
+    private bindSession;
+    /** Arm the response timer and write. Stale bytes from earlier traffic are dropped. */
+    private armAndWrite;
+    /** Fold `chunk` into the session buffer and take the first frame that matches. */
+    private handleData;
+    /**
+     * Apply one parsed frame to the in-flight exchange.
+     *
+     * @returns true when the exchange is complete and the caller should stop
+     */
+    private acceptFrame;
+    /** Give up on a stream that will never parse. Drops the socket either way. */
+    private failOversized;
+    /** Complete the exchange and leave the socket open for the next command. */
+    private succeedPending;
+    /**
+     * Fail the exchange and drop the socket.
+     *
+     * A socket that timed out or reset is not reused. The query retry then dials
+     * a new one, which is what actually recovers after the receiver goes silent.
+     */
+    private rejectPending;
+    private clearPendingTimers;
+    private handleSocketError;
+    private handleSocketClose;
+    /**
+     * Forget `session` and destroy its socket.
+     *
+     * Listeners this session added are removed first. `destroy()` can still emit
+     * `error`, and Node rethrows that when nothing is listening, which would take
+     * down the whole Homebridge process. `removeAllListeners()` is not used: it
+     * would also strip the listeners net.Socket installs for its own lifecycle.
+     */
+    private retireSession;
 }
 /** True when a set failure is likely due to wake / not-ready state. */
 export declare function isReceiverNotReadyError(error: unknown): boolean;
