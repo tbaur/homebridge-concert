@@ -18,7 +18,7 @@ A checklist of what is built. What a Home app user sees, including every log lin
 
 ### Reliability
 
-- ✅ LAN control on TCP port 50000. Each command opens a short-lived connection, sends one frame, reads one response, and closes
+- ✅ LAN control on TCP port 50000. One connection stays open and is reused. It is dropped if the receiver closes it or a request times out
 - ✅ Commands run one at a time, so standby does not see overlapping sessions
 - ✅ Polling, default every 90 seconds. Below 5 seconds falls back to 90. Above 86400 seconds is clamped. Connect and response waits are 5 seconds each
 - ✅ A volume or source On shows On in HomeKit immediately and keeps trying for up to 60 seconds while the receiver wakes. The "receiver is not ready" log waits until that wake has already taken 30 seconds

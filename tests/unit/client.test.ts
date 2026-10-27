@@ -54,6 +54,36 @@ class FakeSocket extends EventEmitter {
 }
 
 /**
+ * One socket per dial. Each write is answered with the next scripted buffer,
+ * including a write that reuses a socket the client kept open.
+ */
+function createScriptedConnection(replies: readonly Buffer[]): {
+  createConnection: jest.Mock
+  written: Buffer[]
+} {
+  const written: Buffer[] = []
+  let index = 0
+  const createConnection = jest.fn(() => {
+    const socket = new FakeSocket()
+    const write = socket.write.bind(socket)
+    socket.write = (data: Buffer, callback?: (error?: Error | null) => void): boolean => {
+      const copy = Buffer.from(data)
+      const ok = write(copy, callback)
+      written.push(copy)
+      const reply = replies[index]
+      index += 1
+      if (reply) {
+        queueMicrotask(() => socket.emit('data', reply))
+      }
+      return ok
+    }
+    queueMicrotask(() => socket.emit('connect'))
+    return socket as unknown as net.Socket
+  })
+  return { createConnection, written }
+}
+
+/**
  * Let fake time pass in small steps so the microtask chains between a timeout,
  * its retry, and the next socket all get a chance to run. Advancing the whole
  * span in one call can fire a later timer before an earlier chain has settled.
@@ -69,7 +99,7 @@ describe('ConcertClient', () => {
     jest.useRealTimers()
   })
 
-  it('queries power state over a short-lived TCP connection', async () => {
+  it('reuses one TCP connection across queries', async () => {
     const socket = new FakeSocket()
     const createConnection = jest.fn(() => {
       queueMicrotask(() => socket.emit('connect'))
@@ -87,26 +117,20 @@ describe('ConcertClient', () => {
     socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
 
     await expect(pending).resolves.toBe(true)
-    expect(socket.destroyed).toBe(true)
+    expect(socket.destroyed).toBe(false)
+    expect(createConnection).toHaveBeenCalledTimes(1)
+
+    const again = client.getPowerState()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(createConnection).toHaveBeenCalledTimes(1)
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, 0x00, 0x0d]))
+    await expect(again).resolves.toBe(false)
   })
 
-  it('sends RC5 power-on and standby commands', async () => {
-    const replies = [
-      Buffer.from([0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_ON, 0x0d]),
-      Buffer.from([0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_OFF, 0x0d]),
-    ]
-    let call = 0
-    const written: Buffer[] = []
-
+  it('does not treat an idle status frame as the answer to the next query', async () => {
+    const socket = new FakeSocket()
     const createConnection = jest.fn(() => {
-      const socket = new FakeSocket()
-      queueMicrotask(() => {
-        socket.emit('connect')
-        queueMicrotask(() => {
-          written.push(...socket.written)
-          socket.emit('data', replies[call++])
-        })
-      })
+      queueMicrotask(() => socket.emit('connect'))
       return socket as unknown as net.Socket
     })
 
@@ -115,9 +139,36 @@ describe('ConcertClient', () => {
       createConnection: createConnection as unknown as typeof net.createConnection,
     })
 
+    const first = client.getPowerState()
+    await new Promise((resolve) => setImmediate(resolve))
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+    await expect(first).resolves.toBe(true)
+
+    // The receiver pushes standby while nothing is in flight. That frame must
+    // not become the result of the next query.
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, 0x00, 0x0d]))
+
+    const second = client.getPowerState()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(createConnection).toHaveBeenCalledTimes(1)
+    socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
+    await expect(second).resolves.toBe(true)
+  })
+
+  it('sends RC5 power-on and standby on one connection', async () => {
+    const { createConnection, written } = createScriptedConnection([
+      Buffer.from([0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_ON, 0x0d]),
+      Buffer.from([0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_OFF, 0x0d]),
+    ])
+
+    const client = new ConcertClient({
+      host: '192.168.1.50',
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
     await expect(client.powerOn()).resolves.toBeUndefined()
     await expect(client.powerStandby()).resolves.toBeUndefined()
-    expect(createConnection).toHaveBeenCalledTimes(2)
+    expect(createConnection).toHaveBeenCalledTimes(1)
     expect([...written[0]]).toEqual([0x21, 0x01, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_ON, 0x0d])
     expect([...written[1]]).toEqual([0x21, 0x01, COMMAND_RC5, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_OFF, 0x0d])
   })
@@ -286,13 +337,16 @@ describe('ConcertClient', () => {
         queueMicrotask(() => socket.emit('error', new Error('ECONNREFUSED')))
         return socket as unknown as net.Socket
       }
-      queueMicrotask(() => {
-        socket.emit('connect')
+      const write = socket.write.bind(socket)
+      socket.write = (data: Buffer, callback?: (error?: Error | null) => void): boolean => {
+        const ok = write(data, callback)
         // A Power status frame satisfies both an RC5 set and a power query.
         queueMicrotask(() => {
           socket.emit('data', Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]))
         })
-      })
+        return ok
+      }
+      queueMicrotask(() => socket.emit('connect'))
       return socket as unknown as net.Socket
     })
 
@@ -557,13 +611,16 @@ describe('ConcertClient', () => {
   it('rejects when zone 2 follows a zone 1 that also reports Follow Zone 1', async () => {
     const createConnection = jest.fn(() => {
       const socket = new FakeSocket()
-      queueMicrotask(() => {
-        socket.emit('connect')
+      const write = socket.write.bind(socket)
+      socket.write = (data: Buffer, callback?: (error?: Error | null) => void): boolean => {
+        const ok = write(data, callback)
+        const zone = data[1] ?? 0x02
         queueMicrotask(() => {
-          const zone = socket.written[0]?.[1] ?? 0x02
           socket.emit('data', Buffer.from([0x21, zone, COMMAND_SOURCE, ANSWER_OK, 0x01, 0x00, 0x0d]))
         })
-      })
+        return ok
+      }
+      queueMicrotask(() => socket.emit('connect'))
       return socket as unknown as net.Socket
     })
 
@@ -710,24 +767,10 @@ describe('ConcertClient', () => {
   })
 
   it('queries and sets source via 0x1D / RC5', async () => {
-    const replies = [
+    const { createConnection, written } = createScriptedConnection([
       Buffer.from([0x21, 0x01, COMMAND_SOURCE, ANSWER_OK, 0x01, 0x01, 0x0d]),
       Buffer.from([0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, 0x76, 0x0d]),
-    ]
-    let call = 0
-    const written: Buffer[] = []
-
-    const createConnection = jest.fn(() => {
-      const socket = new FakeSocket()
-      queueMicrotask(() => {
-        socket.emit('connect')
-        queueMicrotask(() => {
-          written.push(...socket.written)
-          socket.emit('data', replies[call++])
-        })
-      })
-      return socket as unknown as net.Socket
-    })
+    ])
 
     const client = new ConcertClient({
       host: '192.168.1.50',
@@ -741,26 +784,12 @@ describe('ConcertClient', () => {
   })
 
   it('resolves Zone 2 Follow Zone 1 by querying Zone 1 source', async () => {
-    const replies = [
+    const { createConnection, written } = createScriptedConnection([
       // Zone 2: Follow Zone 1
       Buffer.from([0x21, 0x02, COMMAND_SOURCE, ANSWER_OK, 0x01, 0x00, 0x0d]),
       // Zone 1: CD
       Buffer.from([0x21, 0x01, COMMAND_SOURCE, ANSWER_OK, 0x01, 0x01, 0x0d]),
-    ]
-    let call = 0
-    const written: Buffer[] = []
-
-    const createConnection = jest.fn(() => {
-      const socket = new FakeSocket()
-      queueMicrotask(() => {
-        socket.emit('connect')
-        queueMicrotask(() => {
-          written.push(...socket.written)
-          socket.emit('data', replies[call++])
-        })
-      })
-      return socket as unknown as net.Socket
-    })
+    ])
 
     const client = new ConcertClient({
       host: '192.168.1.50',
@@ -837,25 +866,11 @@ describe('ConcertClient', () => {
     expect(createConnection).toHaveBeenCalledTimes(1 + SET_VERIFY_ATTEMPTS)
   })
 
-  it('queries and sets volume over short-lived TCP connections', async () => {
-    const replies = [
+  it('queries and sets volume on one connection', async () => {
+    const { createConnection, written } = createScriptedConnection([
       Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 57, 0x0d]),
       Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 57, 0x0d]),
-    ]
-    let call = 0
-    const written: Buffer[] = []
-
-    const createConnection = jest.fn(() => {
-      const socket = new FakeSocket()
-      queueMicrotask(() => {
-        socket.emit('connect')
-        queueMicrotask(() => {
-          written.push(...socket.written)
-          socket.emit('data', replies[call++])
-        })
-      })
-      return socket as unknown as net.Socket
-    })
+    ])
 
     const client = new ConcertClient({
       host: '192.168.1.50',
@@ -1090,7 +1105,7 @@ describe('ConcertClient', () => {
     await expect(client.setSource('tape')).rejects.toThrow(/Unknown source/)
   })
 
-  it('serializes concurrent power and volume queries onto one socket at a time', async () => {
+  it('serializes concurrent power and volume queries onto one socket', async () => {
     const sockets: FakeSocket[] = []
     const createConnection = jest.fn(() => {
       const socket = new FakeSocket()
@@ -1113,27 +1128,17 @@ describe('ConcertClient', () => {
     await expect(power).resolves.toBe(true)
 
     await new Promise((resolve) => setImmediate(resolve))
-    expect(createConnection).toHaveBeenCalledTimes(2)
-    sockets[1].emit('data', Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 57, 0x0d]))
+    expect(createConnection).toHaveBeenCalledTimes(1)
+    sockets[0].emit('data', Buffer.from([0x21, 0x01, COMMAND_VOLUME, ANSWER_OK, 0x01, 57, 0x0d]))
     await expect(volume).resolves.toBe(57)
+    expect(sockets[0].destroyed).toBe(false)
   })
 
   it('remembers last power state after successful query and set', async () => {
-    const replies = [
+    const { createConnection } = createScriptedConnection([
       Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d]),
       Buffer.from([0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_OFF, 0x0d]),
-    ]
-    let call = 0
-    const createConnection = jest.fn(() => {
-      const socket = new FakeSocket()
-      queueMicrotask(() => {
-        socket.emit('connect')
-        queueMicrotask(() => {
-          socket.emit('data', replies[call++])
-        })
-      })
-      return socket as unknown as net.Socket
-    })
+    ])
 
     const client = new ConcertClient({
       host: '192.168.1.50',

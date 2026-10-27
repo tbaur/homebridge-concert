@@ -25,7 +25,7 @@ If you discover a security vulnerability, please report it responsibly:
 
 This plugin implements:
 
-- **LAN-only control** - The plugin opens short-lived TCP connections only to the host/port you configure; it does not call any cloud API
+- **LAN-only control** - The plugin opens a TCP connection only to the host/port you configure; it does not call any cloud API
 - **No credential storage** - There are no passwords, tokens, or API keys to store or refresh
 - **PagerDuty signal file** - When signals are on, the plugin writes one condition row. That file holds no host, switch name, or credential
 - **Input validation** - Configuration is validated at startup against an allowlist. Missing/invalid `host` or `accessories` is fatal (the plugin does not start; cached accessories stay registered and report "No Response"). Invalid accessory entries (type, name, zone, volume, source) and duplicate accessory identities are fatal. Out-of-range `port` and `refreshRate` values produce a warning and fall back to a safe default or clamp

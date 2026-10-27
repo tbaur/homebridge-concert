@@ -16,7 +16,7 @@ src/
   api/
     protocol.ts         X/XR automation frame builders and parsers.
     sources.ts          Input/source catalog (query codes + RC5 select bytes per zone).
-    client.ts           Short-lived TCP client (injectable createConnection; zone per call).
+    client.ts           TCP client, one reused connection (injectable createConnection; zone per call).
     index.ts            Barrel exports.
   devices/
     switch-accessory.ts Base Switch: Accessory Information, cached On state, set/poll
@@ -58,8 +58,8 @@ docs/
 
 This plugin talks to a **LAN TCP** control port, so each request has to keep working when the receiver does not answer:
 
-- **Short-lived connections** — each query/set opens a TCP socket, sends one frame, reads one response, and closes. That avoids sticky half-open sockets if the receiver drops idle clients in standby.
-- **Serialized TCP** — `ConcertClient` runs one command at a time so Power + Volume polls (and sets) never open overlapping sockets against a flaky standby stack.
+- **One control connection** — `ConcertClient` keeps a single TCP socket and sends every command on it. A socket per command, closed with a reset, leaks slots in the XR control stack. Standby leaves that stack running, so the leak survives standby and only a full power-off clears it. The socket is dropped if the peer closes it or a request times out, and the next command dials again.
+- **Serialized TCP** — one command at a time, so a poll never has two requests in flight on that socket.
 - **Bounded timeouts** — connect and request waits are capped so a stalled receiver cannot wedge Homebridge. Sets accept an overall `timeoutMs` budget that also covers post-ack verification, and every set caller supplies one.
 - **Sets answer inside HAP's write window, then finish out of band.** HAP-NodeJS abandons a write handler after `Accessory.TIMEOUT_WARNING + TIMEOUT_AFTER_WARNING` (9s) and *discards* whatever the handler eventually returns, so a 60s wake retry can never be reported through the write. Each set makes one attempt bounded by `HOMEKIT_WRITE_BUDGET_MS`; if that fails only because the receiver is not ready, the write is acknowledged and `completeInBackground` finishes the job, pushing the real value to HomeKit when it lands and reverting the characteristic if it ultimately fails. Polls skip while that background work is pending. The first not-ready rejection is expected (XR cold boot is ~15–20s), so the info log is deferred 30s and only emitted if that same wake is still in flight.
 - **A set is only confirmed by a frame that agrees with it.** An RC5 power or source command may be acknowledged by a following status frame, so `send` takes a `confirms` predicate: a status frame reporting the *opposite* state is discarded like any other unmatched frame, which routes the ambiguity into settle-and-verify instead of caching the inverse of reality. Checking only the answer code let a "Power = STANDBY" reply confirm a Power On.
