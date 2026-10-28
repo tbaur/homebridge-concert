@@ -8,7 +8,7 @@
  * @fileoverview Plugin-wide constants for AudioControl Concert IP control.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UNKNOWN_PLUGIN_VERSION = exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.WAKE_NOT_READY_LOG_AFTER_MS = exports.POWER_CONFIRM_TIMEOUT_MS = exports.WAKE_RETRY_TIMEOUT_SEC = exports.WAKE_RETRY_TIMEOUT_MS = exports.WAKE_RETRY_INTERVAL_MS = exports.POWER_STATE_TTL_MS = exports.POWER_SET_TIMEOUT_MS = exports.HOMEKIT_WRITE_BUDGET_MS = exports.POLL_FAILURE_REWARN_MS = exports.UNREACHABLE_POLLS_BEFORE_PAGE = exports.POLL_FAILURES_BEFORE_UNKNOWN = exports.STATE_FRESHNESS_MS = exports.QUERY_BREAKER_MAX_COOLDOWN_MS = exports.QUERY_BREAKER_BASE_COOLDOWN_MS = exports.QUERY_BREAKER_FAILURE_THRESHOLD = exports.STATE_QUERY_RETRY_MS = exports.STATE_QUERY_RETRIES = exports.SET_VERIFY_ATTEMPTS = exports.SET_SETTLE_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_ACCESSORY_TEXT_LENGTH = exports.MAX_HOSTNAME_LENGTH = exports.MAX_TCP_PORT = exports.MIN_TCP_PORT = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.MANUFACTURER = exports.DEFAULT_MODEL = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
+exports.UNKNOWN_PLUGIN_VERSION = exports.MAX_RESPONSE_BUFFER_BYTES = exports.DEFAULT_CONNECT_TIMEOUT_MS = exports.WAKE_NOT_READY_LOG_AFTER_MS = exports.POWER_CONFIRM_TIMEOUT_MS = exports.WAKE_RETRY_TIMEOUT_SEC = exports.WAKE_RETRY_TIMEOUT_MS = exports.WAKE_RETRY_INTERVAL_MS = exports.POWER_STATE_TTL_MS = exports.POWER_SET_TIMEOUT_MS = exports.HOMEKIT_WRITE_BUDGET_MS = exports.POLL_FAILURE_REWARN_MS = exports.UNREACHABLE_POLLS_BEFORE_PAGE = exports.POLL_FAILURES_BEFORE_UNKNOWN = exports.STATE_FRESHNESS_MS = exports.QUERY_BREAKER_MAX_COOLDOWN_MS = exports.QUERY_BREAKER_BASE_COOLDOWN_MS = exports.QUERY_BREAKER_FAILURE_THRESHOLD = exports.STATE_QUERY_RETRY_MS = exports.STATE_QUERY_RETRIES = exports.SET_VERIFY_ATTEMPTS = exports.SET_SETTLE_MS = exports.DEFAULT_REQUEST_RESEND_MS = exports.DEFAULT_REQUEST_TIMEOUT_MS = exports.MAX_ACCESSORY_TEXT_LENGTH = exports.MAX_HOSTNAME_LENGTH = exports.MAX_TCP_PORT = exports.MIN_TCP_PORT = exports.MAX_REFRESH_RATE_SEC = exports.MIN_REFRESH_RATE_SEC = exports.DEFAULT_REFRESH_RATE_SEC = exports.MAX_VOLUME = exports.MIN_VOLUME = exports.MANUFACTURER = exports.DEFAULT_MODEL = exports.DEFAULT_ZONE = exports.DEFAULT_CONTROL_PORT = exports.UUID_PREFIX = exports.PLATFORM_NAME = exports.PLUGIN_NAME = void 0;
 exports.readPluginVersion = readPluginVersion;
 const errors_1 = require("./utils/errors");
 /** Name used to register the plugin with Homebridge (must match package.json name). */
@@ -65,6 +65,16 @@ exports.MAX_ACCESSORY_TEXT_LENGTH = 64;
  */
 exports.DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 /**
+ * How long to wait for a reply before writing the same request again on the
+ * same connection, until {@link DEFAULT_REQUEST_TIMEOUT_MS} runs out.
+ *
+ * Measured on an XR-8S: replies take about 130 ms, and about one request in a
+ * hundred gets no reply at all. A resend on the same socket is answered at
+ * normal speed. Dropping the socket and dialing again is what turned each
+ * dropped request into a failed poll.
+ */
+exports.DEFAULT_REQUEST_RESEND_MS = 1_000;
+/**
  * How long to wait between verification attempts after a missing set ack.
  * XR units often apply RC5 / volume changes without echoing a frame while the
  * amp transitions; a short settle avoids racing the status query.
@@ -76,8 +86,9 @@ exports.SET_SETTLE_MS = 1_500;
  */
 exports.SET_VERIFY_ATTEMPTS = 2;
 /**
- * Extra state-query attempts after a ConnectionError.
- * XR units occasionally accept TCP then stay silent for one request.
+ * Extra state-query attempts after a ConnectionError, on a new connection.
+ * A single dropped request is already resent on the same socket
+ * ({@link DEFAULT_REQUEST_RESEND_MS}); this covers a socket that went dead.
  * Used for power, volume, and source queries.
  */
 exports.STATE_QUERY_RETRIES = 1;

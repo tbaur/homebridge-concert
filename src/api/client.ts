@@ -6,11 +6,12 @@
  *
  * @fileoverview TCP client for AudioControl Concert X/XR series IP automation control.
  *
- * Keeps one TCP connection and sends every command on it. A fresh socket per
- * command, closed with a reset, leaks slots in the XR control stack. Standby
- * does not reset that stack; only a full power-off does. The socket is dropped
- * if the peer closes it or a request times out, and the next command dials.
- * Commands are serialized so two requests are never in flight together.
+ * Keeps one TCP connection and sends every command on it. The XR drops about
+ * one request in a hundred without replying, so an unanswered request is
+ * written again on the same socket every {@link DEFAULT_REQUEST_RESEND_MS}.
+ * The socket is dropped only when the peer closes it or nothing answers for
+ * the whole request timeout, and the next command dials. Commands are
+ * serialized so two requests are never in flight together.
  */
 
 import net from 'node:net'
@@ -19,6 +20,7 @@ import { ConnectionError, ProtocolError } from '../errors'
 import {
   DEFAULT_CONNECT_TIMEOUT_MS,
   DEFAULT_CONTROL_PORT,
+  DEFAULT_REQUEST_RESEND_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_ZONE,
   MAX_RESPONSE_BUFFER_BYTES,
@@ -77,6 +79,8 @@ export interface ConcertClientOptions {
   port?: number
   connectTimeoutMs?: number
   requestTimeoutMs?: number
+  /** Resend an unanswered request on the same socket after this long. */
+  requestResendMs?: number
   logger?: PluginLogger
   /** Injected for tests; defaults to `net.createConnection`. */
   createConnection?: typeof net.createConnection
@@ -155,6 +159,9 @@ const CONTROL_SOCKET_KEEPALIVE_MS = 30_000
 
 /** One in-flight exchange on the shared control socket. */
 interface PendingExchange {
+  request: Buffer
+  /** Times `request` has been written on the current socket. */
+  sends: number
   zone: number
   accepted: readonly number[]
   confirms?: (response: ProtocolResponse) => boolean
@@ -166,6 +173,7 @@ interface PendingExchange {
   session?: ControlSession
   connectTimer?: ReturnType<typeof setTimeout>
   requestTimer?: ReturnType<typeof setTimeout>
+  resendTimer?: ReturnType<typeof setTimeout>
   abort: (error: Error) => void
   resolve: (response: ProtocolResponse) => void
   reject: (error: Error) => void
@@ -195,6 +203,7 @@ export class ConcertClient {
   private readonly port: number
   private readonly connectTimeoutMs: number
   private readonly requestTimeoutMs: number
+  private readonly requestResendMs: number
   private readonly log: PluginLogger
   private readonly createConnection: typeof net.createConnection
   private readonly onExchange?: (result: ExchangeResult) => void
@@ -229,6 +238,7 @@ export class ConcertClient {
     this.port = options.port ?? DEFAULT_CONTROL_PORT
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    this.requestResendMs = options.requestResendMs ?? DEFAULT_REQUEST_RESEND_MS
     this.log = options.logger ?? {}
     this.createConnection = options.createConnection ?? net.createConnection
     this.onExchange = options.onExchange
@@ -393,9 +403,11 @@ export class ConcertClient {
   }
 
   /**
-   * Retry a ConnectionError once. XR units sometimes accept TCP then stay
-   * silent for a single request. The silent socket is dropped first, so this
-   * dials again instead of writing into a connection that already went quiet.
+   * Retry a ConnectionError once, on a new connection.
+   *
+   * A single dropped request never gets here: {@link writeRequest} resends it
+   * on the same socket. Reaching this means the socket failed or stayed silent
+   * for the whole request timeout, so it was dropped and this dials again.
    */
   private async withQueryRetry<T>(
     operation: string,
@@ -431,8 +443,8 @@ export class ConcertClient {
   /**
    * Query whether the zone is powered on.
    *
-   * Retries once on ConnectionError — XR units sometimes accept TCP then
-   * stay silent for a single request before answering normally.
+   * An unanswered request is resent on the same socket; a socket that stays
+   * silent for the whole timeout is dropped and the query retried once.
    */
   async getPowerState(zone?: number): Promise<boolean> {
     const resolvedZone = this.resolveZone(zone)
@@ -919,6 +931,8 @@ export class ConcertClient {
 
     return new Promise((resolve, reject) => {
       const pending: PendingExchange = {
+        request,
+        sends: 0,
         zone,
         accepted,
         confirms,
@@ -934,18 +948,18 @@ export class ConcertClient {
       }
       pending.abort = abort
       this.inFlightAborts.add(abort)
-      this.startExchange(pending, request, deadline)
+      this.startExchange(pending, deadline)
     })
   }
 
   /** Reuse the open socket, or dial when the last one was dropped. */
-  private startExchange(pending: PendingExchange, request: Buffer, deadline: Deadline): void {
+  private startExchange(pending: PendingExchange, deadline: Deadline): void {
     const existing = this.usableSession()
     if (existing) {
-      this.armAndWrite(existing, pending, request, deadline)
+      this.armAndWrite(existing, pending, deadline)
       return
     }
-    this.dial(pending, request, deadline)
+    this.dial(pending, deadline)
   }
 
   /**
@@ -969,7 +983,7 @@ export class ConcertClient {
   }
 
   /** Open a new control connection for `pending` and write once it connects. */
-  private dial(pending: PendingExchange, request: Buffer, deadline: Deadline): void {
+  private dial(pending: PendingExchange, deadline: Deadline): void {
     const { host, port, connectHost } = this
     let socket: net.Socket
     try {
@@ -1000,7 +1014,7 @@ export class ConcertClient {
         clearTimeout(pending.connectTimer)
         pending.connectTimer = undefined
       }
-      this.armAndWrite(session, pending, request, deadline)
+      this.armAndWrite(session, pending, deadline)
     }
     session.onConnect = onConnect
     pending.connectTimer = setTimeout(() => {
@@ -1046,12 +1060,7 @@ export class ConcertClient {
   }
 
   /** Arm the response timer and write. Stale bytes from earlier traffic are dropped. */
-  private armAndWrite(
-    session: ControlSession,
-    pending: PendingExchange,
-    request: Buffer,
-    deadline: Deadline,
-  ): void {
+  private armAndWrite(session: ControlSession, pending: PendingExchange, deadline: Deadline): void {
     if (pending.settled || session.dropped) {
       return
     }
@@ -1065,11 +1074,36 @@ export class ConcertClient {
     pending.requestTimer = setTimeout(() => {
       this.rejectPending(pending, new ConnectionError(
         `Timed out waiting for a response from ${pending.target}`
-        + `${describePartialResponse(session.buffer)}`,
+        + ` (sent ${pending.sends}x)${describePartialResponse(session.buffer)}`,
       ))
     }, boundedTimeout(this.requestTimeoutMs, deadline))
 
-    session.socket.write(request, (writeError) => {
+    this.writeRequest(session, pending)
+  }
+
+  /**
+   * Write the request, and write it again on the same socket while no reply
+   * arrives. Every command this client sends is a query or a discrete set, so
+   * a duplicate write changes nothing on the receiver.
+   */
+  private writeRequest(session: ControlSession, pending: PendingExchange): void {
+    if (pending.settled || session.dropped) {
+      return
+    }
+    pending.sends += 1
+    if (pending.sends > 1) {
+      this.log.debug?.(
+        `No reply from ${pending.target} after ${this.requestResendMs}ms; `
+        + `resending on the same connection (send ${pending.sends})`,
+      )
+    }
+    if (this.requestResendMs > 0) {
+      pending.resendTimer = setTimeout(() => {
+        this.writeRequest(session, pending)
+      }, this.requestResendMs)
+    }
+
+    session.socket.write(pending.request, (writeError) => {
       if (!writeError || pending.settled) {
         return
       }
@@ -1182,8 +1216,9 @@ export class ConcertClient {
   /**
    * Fail the exchange and drop the socket.
    *
-   * A socket that timed out or reset is not reused. The query retry then dials
-   * a new one, which is what actually recovers after the receiver goes silent.
+   * By now the request was resent on this socket for the whole timeout with no
+   * reply, or the socket errored or closed, so it is not reused. The query
+   * retry dials a new one.
    */
   private rejectPending(pending: PendingExchange, error: Error): void {
     if (pending.settled) {
@@ -1209,6 +1244,10 @@ export class ConcertClient {
     if (pending.requestTimer) {
       clearTimeout(pending.requestTimer)
       pending.requestTimer = undefined
+    }
+    if (pending.resendTimer) {
+      clearTimeout(pending.resendTimer)
+      pending.resendTimer = undefined
     }
   }
 
