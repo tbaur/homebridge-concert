@@ -5,6 +5,8 @@ Reference for the binary IP/RS232 control surface used by AudioControl Concert X
 ## Provenance
 
 - **Source of truth:** AudioControl’s official serial/IP protocol document (linked from Concert XR product pages at [audiocontrol.com](https://www.audiocontrol.com)).
+- **Owner’s manual:** [Concert XR series user manual](pdf/concert-xr-series-user-manual.pdf) ([original](https://archive.audiocontrol.com/downloads/home/current/concert-xr-series/concert-xr-series-user-manual.pdf)). Its *Automation Integration* section covers IP control on port 50000 and the RS232 settings (38,400 baud, 8N1, no flow control). The *General Setup* menu covers **Control** (IP or RS232) and **Standby Mode** (Low Power, or IP and HDMI ON). The command set itself is in the separate protocol document.
+- **Full command reference:** [Arcam AVR5/AVR10/AVR20/AVR30/AV40 serial and IP protocol](pdf/arcam-avr5-10-20-30-av40-rs232-ip-protocol.pdf) (SH289E, 7 Oct 2021, [original](https://www.arcam.co.uk/ugc/tor/avr5/Custom%20Installation%20Notes/RS232_5_10_20_30_40_SH289E_E_07Oct21.pdf)). AudioControl does not publish its own copy; its product pages offer an Excel automation table instead. The Concert XR uses the same platform and framing, and the codes this plugin has verified on an XR-8S match this document: power `0x00`, RC5 `0x08`, volume `0x0D`, current source `0x1D`, and answer code `0x85`. It also documents the RC5 code set, AMX Duet discovery, and the note that an RC5 command usually triggers an extra status message.
 - **Family framing:** The same `0x21 … 0x0D` request/response layout appears on sibling Harman/Arcam-class receivers. Many command codes below are documented from that family and **must be verified on Concert XR** before shipping new HomeKit features.
 - Rows marked **Verified** have been exercised against Concert hardware in this plugin (power, volume, and source — the paths HomeKit uses today). Rows marked **Family** come from the shared framing family and still need Concert XR confirmation before relying on them in production.
 
@@ -16,7 +18,7 @@ Reference for the binary IP/RS232 control surface used by AudioControl Concert X
 | IP port | `50000` |
 | Receiver setup | **Control → IP**; **Standby Mode → IP and HDMI ON** so the unit answers while in standby |
 
-This plugin keeps **one TCP connection** and sends each command on it. The socket stays open until the receiver closes it or a request times out; the next command connects again.
+This plugin keeps **one TCP connection** and sends each command on it. Replies normally arrive in about 130 ms. The receiver drops about one request in a hundred without replying, and a resend on the same connection is answered normally. So the plugin sends a request again if it gets no reply after 1 second. The socket stays open until the receiver closes it or nothing answers for 5 seconds; the next command connects again.
 
 ## Wire format
 

@@ -742,6 +742,127 @@ describe('ConcertClient', () => {
     expect(createConnection).toHaveBeenCalledTimes(2)
   })
 
+  describe('resend on the same connection', () => {
+    const POWER_QUERY_FRAME = Buffer.from([0x21, 0x01, 0x00, 0x01, 0xf0, 0x0d])
+    const POWER_ON_REPLY = Buffer.from([0x21, 0x01, 0x00, ANSWER_OK, 0x01, POWER_ON, 0x0d])
+
+    /** One socket per dial; `answer(writeIndex)` decides which writes get a reply. */
+    function connectionThatAnswers(answer: (writeIndex: number) => boolean): {
+      createConnection: jest.Mock
+      sockets: FakeSocket[]
+    } {
+      const sockets: FakeSocket[] = []
+      const createConnection = jest.fn(() => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        const write = socket.write.bind(socket)
+        socket.write = (data: Buffer, callback?: (error?: Error | null) => void): boolean => {
+          const ok = write(data, callback)
+          if (answer(socket.written.length - 1)) {
+            queueMicrotask(() => socket.emit('data', POWER_ON_REPLY))
+          }
+          return ok
+        }
+        queueMicrotask(() => socket.emit('connect'))
+        return socket as unknown as net.Socket
+      })
+      return { createConnection, sockets }
+    }
+
+    it('resends a dropped request on the same socket instead of redialing', async () => {
+      jest.useFakeTimers()
+      const { createConnection, sockets } = connectionThatAnswers((writeIndex) => writeIndex === 1)
+      const client = new ConcertClient({
+        host: '192.168.1.50',
+        requestTimeoutMs: 5_000,
+        requestResendMs: 1_000,
+        createConnection: createConnection as unknown as typeof net.createConnection,
+      })
+
+      const pending = client.getPowerState()
+      await advanceInSteps(1_100)
+
+      await expect(pending).resolves.toBe(true)
+      expect(createConnection).toHaveBeenCalledTimes(1)
+      expect(sockets[0].written).toEqual([POWER_QUERY_FRAME, POWER_QUERY_FRAME])
+      expect(sockets[0].destroyed).toBe(false)
+    })
+
+    it('stops resending once the reply arrives', async () => {
+      jest.useFakeTimers()
+      const { createConnection, sockets } = connectionThatAnswers(() => true)
+      const client = new ConcertClient({
+        host: '192.168.1.50',
+        requestResendMs: 1_000,
+        createConnection: createConnection as unknown as typeof net.createConnection,
+      })
+
+      const pending = client.getPowerState()
+      await advanceInSteps(100)
+      await expect(pending).resolves.toBe(true)
+      await advanceInSteps(5_000, 250)
+
+      expect(sockets[0].written).toHaveLength(1)
+    })
+
+    it('drops the socket only after resends go unanswered for the whole timeout', async () => {
+      jest.useFakeTimers()
+      const { createConnection, sockets } = connectionThatAnswers(() => false)
+      const client = new ConcertClient({
+        host: '192.168.1.50',
+        requestTimeoutMs: 5_000,
+        requestResendMs: 1_000,
+        createConnection: createConnection as unknown as typeof net.createConnection,
+      })
+
+      const pending = expect(client.getPowerState()).rejects.toThrow(
+        'Timed out waiting for a response from 192.168.1.50:50000 zone 1 (sent 5x)',
+      )
+      await advanceInSteps(4_900)
+      expect(createConnection).toHaveBeenCalledTimes(1)
+      expect(sockets[0].destroyed).toBe(false)
+
+      await advanceInSteps(5_000 + STATE_QUERY_RETRY_MS + 500)
+      await pending
+      expect(sockets[0].written).toHaveLength(5)
+      expect(sockets[0].destroyed).toBe(true)
+      expect(createConnection).toHaveBeenCalledTimes(2)
+    })
+
+    it('resends a set whose ack was dropped', async () => {
+      jest.useFakeTimers()
+      const sockets: FakeSocket[] = []
+      const createConnection = jest.fn(() => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        const write = socket.write.bind(socket)
+        socket.write = (data: Buffer, callback?: (error?: Error | null) => void): boolean => {
+          const ok = write(data, callback)
+          if (socket.written.length === 2) {
+            queueMicrotask(() => socket.emit('data', Buffer.from([
+              0x21, 0x01, COMMAND_RC5, ANSWER_OK, 0x02, RC5_SYSTEM_ZONE1, RC5_POWER_ON, 0x0d,
+            ])))
+          }
+          return ok
+        }
+        queueMicrotask(() => socket.emit('connect'))
+        return socket as unknown as net.Socket
+      })
+      const client = new ConcertClient({
+        host: '192.168.1.50',
+        requestResendMs: 1_000,
+        createConnection: createConnection as unknown as typeof net.createConnection,
+      })
+
+      const pending = client.setPower(true, 1, { timeoutMs: 2_500 })
+      await advanceInSteps(1_100)
+
+      await expect(pending).resolves.toBeUndefined()
+      expect(createConnection).toHaveBeenCalledTimes(1)
+      expect(sockets[0].written).toEqual([buildPowerOn(1), buildPowerOn(1)])
+    })
+  })
+
   it('rejects oversized response buffers', async () => {
     const socket = new FakeSocket()
     const createConnection = jest.fn(() => {

@@ -120,7 +120,7 @@ A fatal config error leaves cached switches registered. They report No Response 
 
 Volume and source polls are skipped while the zone was last seen in standby. That memory expires after 5 minutes, so a receiver that was unplugged in standby still reaches No Response instead of reporting Off forever.
 
-Each query is tried once more if the receiver accepts the connection and then stays silent. That retry is part of the same poll.
+The receiver sometimes drops a request without replying. A request with no reply after 1 second is sent again on the same connection. If nothing answers for 5 seconds, the plugin opens a new connection and tries the query once more. Both are part of the same poll.
 
 Until the first successful read, a switch reports No Response rather than a guessed value. One failed poll keeps the last known state. Three failed polls in a row report No Response again. The first failure in a streak is a warning. Later ones stay at debug for an hour, then warn again, so a receiver that is down for days does not fill the log and does not disappear from it.
 

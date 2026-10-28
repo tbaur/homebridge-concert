@@ -6,11 +6,12 @@
  *
  * @fileoverview TCP client for AudioControl Concert X/XR series IP automation control.
  *
- * Keeps one TCP connection and sends every command on it. A fresh socket per
- * command, closed with a reset, leaks slots in the XR control stack. Standby
- * does not reset that stack; only a full power-off does. The socket is dropped
- * if the peer closes it or a request times out, and the next command dials.
- * Commands are serialized so two requests are never in flight together.
+ * Keeps one TCP connection and sends every command on it. The XR drops about
+ * one request in a hundred without replying, so an unanswered request is
+ * written again on the same socket every {@link DEFAULT_REQUEST_RESEND_MS}.
+ * The socket is dropped only when the peer closes it or nothing answers for
+ * the whole request timeout, and the next command dials. Commands are
+ * serialized so two requests are never in flight together.
  */
 import net from 'node:net';
 import type { PluginLogger } from '../types';
@@ -22,6 +23,8 @@ export interface ConcertClientOptions {
     port?: number;
     connectTimeoutMs?: number;
     requestTimeoutMs?: number;
+    /** Resend an unanswered request on the same socket after this long. */
+    requestResendMs?: number;
     logger?: PluginLogger;
     /** Injected for tests; defaults to `net.createConnection`. */
     createConnection?: typeof net.createConnection;
@@ -53,6 +56,7 @@ export declare class ConcertClient {
     private readonly port;
     private readonly connectTimeoutMs;
     private readonly requestTimeoutMs;
+    private readonly requestResendMs;
     private readonly log;
     private readonly createConnection;
     private readonly onExchange?;
@@ -134,9 +138,11 @@ export declare class ConcertClient {
     /** Run `fn` with exclusive access to the TCP send path. */
     private withExclusive;
     /**
-     * Retry a ConnectionError once. XR units sometimes accept TCP then stay
-     * silent for a single request. The silent socket is dropped first, so this
-     * dials again instead of writing into a connection that already went quiet.
+     * Retry a ConnectionError once, on a new connection.
+     *
+     * A single dropped request never gets here: {@link writeRequest} resends it
+     * on the same socket. Reaching this means the socket failed or stayed silent
+     * for the whole request timeout, so it was dropped and this dials again.
      */
     private withQueryRetry;
     /** Retry sleep that wakes early on shutdown and never holds the event loop open. */
@@ -144,8 +150,8 @@ export declare class ConcertClient {
     /**
      * Query whether the zone is powered on.
      *
-     * Retries once on ConnectionError — XR units sometimes accept TCP then
-     * stay silent for a single request before answering normally.
+     * An unanswered request is resent on the same socket; a socket that stays
+     * silent for the whole timeout is dropped and the query retried once.
      */
     getPowerState(zone?: number): Promise<boolean>;
     /**
@@ -282,6 +288,12 @@ export declare class ConcertClient {
     private bindSession;
     /** Arm the response timer and write. Stale bytes from earlier traffic are dropped. */
     private armAndWrite;
+    /**
+     * Write the request, and write it again on the same socket while no reply
+     * arrives. Every command this client sends is a query or a discrete set, so
+     * a duplicate write changes nothing on the receiver.
+     */
+    private writeRequest;
     /** Fold `chunk` into the session buffer and take the first frame that matches. */
     private handleData;
     /**
@@ -297,8 +309,9 @@ export declare class ConcertClient {
     /**
      * Fail the exchange and drop the socket.
      *
-     * A socket that timed out or reset is not reused. The query retry then dials
-     * a new one, which is what actually recovers after the receiver goes silent.
+     * By now the request was resent on this socket for the whole timeout with no
+     * reply, or the socket errored or closed, so it is not reused. The query
+     * retry dials a new one.
      */
     private rejectPending;
     private clearPendingTimers;

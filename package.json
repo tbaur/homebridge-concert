@@ -76,6 +76,7 @@
     "!dist/**/*.map",
     "config.schema.json",
     "docs/**/*",
+    "!docs/pdf/**",
     "LICENSE",
     "README.md",
     "CHANGELOG.md",

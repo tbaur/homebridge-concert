@@ -7,11 +7,12 @@
  *
  * @fileoverview TCP client for AudioControl Concert X/XR series IP automation control.
  *
- * Keeps one TCP connection and sends every command on it. A fresh socket per
- * command, closed with a reset, leaks slots in the XR control stack. Standby
- * does not reset that stack; only a full power-off does. The socket is dropped
- * if the peer closes it or a request times out, and the next command dials.
- * Commands are serialized so two requests are never in flight together.
+ * Keeps one TCP connection and sends every command on it. The XR drops about
+ * one request in a hundred without replying, so an unanswered request is
+ * written again on the same socket every {@link DEFAULT_REQUEST_RESEND_MS}.
+ * The socket is dropped only when the peer closes it or nothing answers for
+ * the whole request timeout, and the next command dials. Commands are
+ * serialized so two requests are never in flight together.
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -65,6 +66,7 @@ class ConcertClient {
     port;
     connectTimeoutMs;
     requestTimeoutMs;
+    requestResendMs;
     log;
     createConnection;
     onExchange;
@@ -98,6 +100,7 @@ class ConcertClient {
         this.port = options.port ?? settings_1.DEFAULT_CONTROL_PORT;
         this.connectTimeoutMs = options.connectTimeoutMs ?? settings_1.DEFAULT_CONNECT_TIMEOUT_MS;
         this.requestTimeoutMs = options.requestTimeoutMs ?? settings_1.DEFAULT_REQUEST_TIMEOUT_MS;
+        this.requestResendMs = options.requestResendMs ?? settings_1.DEFAULT_REQUEST_RESEND_MS;
         this.log = options.logger ?? {};
         this.createConnection = options.createConnection ?? node_net_1.default.createConnection;
         this.onExchange = options.onExchange;
@@ -242,9 +245,11 @@ class ConcertClient {
         return run;
     }
     /**
-     * Retry a ConnectionError once. XR units sometimes accept TCP then stay
-     * silent for a single request. The silent socket is dropped first, so this
-     * dials again instead of writing into a connection that already went quiet.
+     * Retry a ConnectionError once, on a new connection.
+     *
+     * A single dropped request never gets here: {@link writeRequest} resends it
+     * on the same socket. Reaching this means the socket failed or stayed silent
+     * for the whole request timeout, so it was dropped and this dials again.
      */
     async withQueryRetry(operation, run, deadline) {
         const attempts = 1 + settings_1.STATE_QUERY_RETRIES;
@@ -273,8 +278,8 @@ class ConcertClient {
     /**
      * Query whether the zone is powered on.
      *
-     * Retries once on ConnectionError — XR units sometimes accept TCP then
-     * stay silent for a single request before answering normally.
+     * An unanswered request is resent on the same socket; a socket that stays
+     * silent for the whole timeout is dropped and the query retried once.
      */
     async getPowerState(zone) {
         const resolvedZone = this.resolveZone(zone);
@@ -645,6 +650,8 @@ class ConcertClient {
         this.log.debug?.(`→ ${host}:${port} ${(0, protocol_1.formatFrame)(request)}`);
         return new Promise((resolve, reject) => {
             const pending = {
+                request,
+                sends: 0,
                 zone,
                 accepted,
                 confirms,
@@ -660,17 +667,17 @@ class ConcertClient {
             };
             pending.abort = abort;
             this.inFlightAborts.add(abort);
-            this.startExchange(pending, request, deadline);
+            this.startExchange(pending, deadline);
         });
     }
     /** Reuse the open socket, or dial when the last one was dropped. */
-    startExchange(pending, request, deadline) {
+    startExchange(pending, deadline) {
         const existing = this.usableSession();
         if (existing) {
-            this.armAndWrite(existing, pending, request, deadline);
+            this.armAndWrite(existing, pending, deadline);
             return;
         }
-        this.dial(pending, request, deadline);
+        this.dial(pending, deadline);
     }
     /**
      * The live session, or `undefined` when there is nothing worth writing to.
@@ -692,7 +699,7 @@ class ConcertClient {
         return undefined;
     }
     /** Open a new control connection for `pending` and write once it connects. */
-    dial(pending, request, deadline) {
+    dial(pending, deadline) {
         const { host, port, connectHost } = this;
         let socket;
         try {
@@ -717,7 +724,7 @@ class ConcertClient {
                 clearTimeout(pending.connectTimer);
                 pending.connectTimer = undefined;
             }
-            this.armAndWrite(session, pending, request, deadline);
+            this.armAndWrite(session, pending, deadline);
         };
         session.onConnect = onConnect;
         pending.connectTimer = setTimeout(() => {
@@ -759,7 +766,7 @@ class ConcertClient {
         return session;
     }
     /** Arm the response timer and write. Stale bytes from earlier traffic are dropped. */
-    armAndWrite(session, pending, request, deadline) {
+    armAndWrite(session, pending, deadline) {
         if (pending.settled || session.dropped) {
             return;
         }
@@ -772,9 +779,30 @@ class ConcertClient {
         // Recomputed here so connect + response together stay inside the budget.
         pending.requestTimer = setTimeout(() => {
             this.rejectPending(pending, new errors_1.ConnectionError(`Timed out waiting for a response from ${pending.target}`
-                + `${describePartialResponse(session.buffer)}`));
+                + ` (sent ${pending.sends}x)${describePartialResponse(session.buffer)}`));
         }, boundedTimeout(this.requestTimeoutMs, deadline));
-        session.socket.write(request, (writeError) => {
+        this.writeRequest(session, pending);
+    }
+    /**
+     * Write the request, and write it again on the same socket while no reply
+     * arrives. Every command this client sends is a query or a discrete set, so
+     * a duplicate write changes nothing on the receiver.
+     */
+    writeRequest(session, pending) {
+        if (pending.settled || session.dropped) {
+            return;
+        }
+        pending.sends += 1;
+        if (pending.sends > 1) {
+            this.log.debug?.(`No reply from ${pending.target} after ${this.requestResendMs}ms; `
+                + `resending on the same connection (send ${pending.sends})`);
+        }
+        if (this.requestResendMs > 0) {
+            pending.resendTimer = setTimeout(() => {
+                this.writeRequest(session, pending);
+            }, this.requestResendMs);
+        }
+        session.socket.write(pending.request, (writeError) => {
             if (!writeError || pending.settled) {
                 return;
             }
@@ -868,8 +896,9 @@ class ConcertClient {
     /**
      * Fail the exchange and drop the socket.
      *
-     * A socket that timed out or reset is not reused. The query retry then dials
-     * a new one, which is what actually recovers after the receiver goes silent.
+     * By now the request was resent on this socket for the whole timeout with no
+     * reply, or the socket errored or closed, so it is not reused. The query
+     * retry dials a new one.
      */
     rejectPending(pending, error) {
         if (pending.settled) {
@@ -894,6 +923,10 @@ class ConcertClient {
         if (pending.requestTimer) {
             clearTimeout(pending.requestTimer);
             pending.requestTimer = undefined;
+        }
+        if (pending.resendTimer) {
+            clearTimeout(pending.resendTimer);
+            pending.resendTimer = undefined;
         }
     }
     handleSocketError(session, error) {

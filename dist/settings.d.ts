@@ -60,6 +60,16 @@ export declare const MAX_ACCESSORY_TEXT_LENGTH = 64;
  */
 export declare const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 /**
+ * How long to wait for a reply before writing the same request again on the
+ * same connection, until {@link DEFAULT_REQUEST_TIMEOUT_MS} runs out.
+ *
+ * Measured on an XR-8S: replies take about 130 ms, and about one request in a
+ * hundred gets no reply at all. A resend on the same socket is answered at
+ * normal speed. Dropping the socket and dialing again is what turned each
+ * dropped request into a failed poll.
+ */
+export declare const DEFAULT_REQUEST_RESEND_MS = 1000;
+/**
  * How long to wait between verification attempts after a missing set ack.
  * XR units often apply RC5 / volume changes without echoing a frame while the
  * amp transitions; a short settle avoids racing the status query.
@@ -71,8 +81,9 @@ export declare const SET_SETTLE_MS = 1500;
  */
 export declare const SET_VERIFY_ATTEMPTS = 2;
 /**
- * Extra state-query attempts after a ConnectionError.
- * XR units occasionally accept TCP then stay silent for one request.
+ * Extra state-query attempts after a ConnectionError, on a new connection.
+ * A single dropped request is already resent on the same socket
+ * ({@link DEFAULT_REQUEST_RESEND_MS}); this covers a socket that went dead.
  * Used for power, volume, and source queries.
  */
 export declare const STATE_QUERY_RETRIES = 1;
