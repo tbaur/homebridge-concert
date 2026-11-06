@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file. This file is maintained automatically by [release-please](https://github.com/googleapis/release-please) based on [Conventional Commits](https://www.conventionalcommits.org).
 
+## [2.1.3](https://github.com/tbaur/homebridge-concert/compare/v2.1.2...v2.1.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* count lock wait against a set's HomeKit budget ([#81](https://github.com/tbaur/homebridge-concert/issues/81)) ([ccd7b06](https://github.com/tbaur/homebridge-concert/commit/ccd7b06b63f3283820b8244e9d50f6c6d3f9b261))
+
 ## [2.1.2](https://github.com/tbaur/homebridge-concert/compare/v2.1.1...v2.1.2) (2026-10-28)
 
 
