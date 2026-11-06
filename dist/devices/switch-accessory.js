@@ -293,8 +293,8 @@ class SwitchAccessory {
         // not depend on being able to `require` it.
         const { HAPStatus, HapStatusError } = this.platform.api.hap;
         const status = error instanceof RangeError
-            ? -70410 /* HAPStatus.INVALID_VALUE_IN_REQUEST */
-            : -70402 /* HAPStatus.SERVICE_COMMUNICATION_FAILURE */;
+            ? HAPStatus.INVALID_VALUE_IN_REQUEST
+            : HAPStatus.SERVICE_COMMUNICATION_FAILURE;
         return new HapStatusError(status);
     }
     noteRefreshFailed(error, reason) {

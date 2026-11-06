@@ -343,7 +343,7 @@ class ConcertPlatform {
             return;
         }
         const unavailable = () => {
-            throw new this.api.hap.HapStatusError(-70402 /* this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE */);
+            throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
         };
         service.getCharacteristic(this.Characteristic.On)
             .onGet(unavailable)

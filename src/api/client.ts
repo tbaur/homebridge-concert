@@ -395,11 +395,42 @@ export class ConcertClient {
     }
   }
 
-  /** Run `fn` with exclusive access to the TCP send path. */
-  private withExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.sendQueue.then(fn, fn)
-    this.sendQueue = run.then(() => undefined, () => undefined)
+  /**
+   * Run `fn` with exclusive access to the TCP send path.
+   *
+   * The wait for the lock counts against `deadline`. Without that, a HomeKit
+   * write queued behind slow polls of a waking receiver blocks far past its
+   * budget, and HAP reports the plugin as slowing down Homebridge.
+   */
+  private withExclusive<T>(fn: () => Promise<T>, deadline?: Deadline): Promise<T> {
+    const turn = this.sendQueue
+    const run = this.waitForTurn(turn, deadline).then(fn)
+    this.sendQueue = turn.then(() => run.then(() => undefined, () => undefined))
     return run
+  }
+
+  /** Resolve when `turn` settles, or reject if `deadline` passes first. */
+  private waitForTurn(turn: Promise<void>, deadline: Deadline): Promise<void> {
+    const remaining = remainingMs(deadline)
+    if (remaining === undefined) {
+      return turn
+    }
+    return new Promise((resolve, reject) => {
+      let isAbandoned = false
+      const timer = setTimeout(() => {
+        isAbandoned = true
+        reject(new ConnectionError(
+          `Timed out waiting for earlier commands to ${this.host}:${this.port} to finish`,
+        ))
+      }, Math.max(0, remaining))
+      timer.unref?.()
+      void turn.then(() => {
+        clearTimeout(timer)
+        if (!isAbandoned) {
+          resolve()
+        }
+      })
+    })
   }
 
   /**
@@ -462,7 +493,7 @@ export class ConcertClient {
       const response = await this.send(buildPowerQuery(zone), COMMAND_POWER, zone, { deadline })
       this.assertOk(response, 'power query')
       return isPowerOn(response.data)
-    }), deadline)
+    }, deadline), deadline)
     this.rememberPowerState(zone, on)
     return on
   }
@@ -524,7 +555,7 @@ export class ConcertClient {
         } else {
           await this.powerStandbyUnlocked(resolvedZone, deadline)
         }
-      })
+      }, deadline)
       this.rememberPowerState(resolvedZone, on)
       this.noteReachable()
       return
@@ -578,7 +609,7 @@ export class ConcertClient {
       const response = await this.send(buildVolumeQuery(zone), COMMAND_VOLUME, zone, { deadline })
       this.assertOk(response, 'volume query')
       return parseVolume(response.data)
-    }), deadline)
+    }, deadline), deadline)
   }
 
   /**
@@ -606,7 +637,7 @@ export class ConcertClient {
           { deadline, confirms: confirmsVolume(level) },
         )
         this.assertOk(response, 'volume set')
-      })
+      }, deadline)
       // Volume is only accepted while powered; keep standby-skip accurate.
       this.rememberPowerState(zone, true)
       this.noteReachable()
@@ -729,7 +760,7 @@ export class ConcertClient {
         return parseSource(z1.data).id
       }
       return parseSource(response.data).id
-    }), deadline)
+    }, deadline), deadline)
   }
 
   /**
@@ -767,7 +798,7 @@ export class ConcertClient {
           { deadline, confirms: confirmsSource(resolved.id) },
         )
         this.assertOk(response, 'source set')
-      })
+      }, deadline)
       this.rememberPowerState(zone, true)
       this.noteReachable()
       return
