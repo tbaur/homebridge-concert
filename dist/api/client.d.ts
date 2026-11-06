@@ -135,8 +135,16 @@ export declare class ConcertClient {
      * count as unreachable — a ProtocolError means the receiver answered.
      */
     private trackQuery;
-    /** Run `fn` with exclusive access to the TCP send path. */
+    /**
+     * Run `fn` with exclusive access to the TCP send path.
+     *
+     * The wait for the lock counts against `deadline`. Without that, a HomeKit
+     * write queued behind slow polls of a waking receiver blocks far past its
+     * budget, and HAP reports the plugin as slowing down Homebridge.
+     */
     private withExclusive;
+    /** Resolve when `turn` settles, or reject if `deadline` passes first. */
+    private waitForTurn;
     /**
      * Retry a ConnectionError once, on a new connection.
      *

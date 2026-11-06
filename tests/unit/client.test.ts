@@ -420,6 +420,38 @@ describe('ConcertClient', () => {
     expect(settledAt - started).toBeLessThan(2_000)
   })
 
+  it('counts time queued behind other commands against a set timeout', async () => {
+    jest.useFakeTimers()
+    // Never answers, so the query holds the lock for its whole request timeout.
+    const createConnection = jest.fn(() => {
+      const socket = new FakeSocket()
+      queueMicrotask(() => socket.emit('connect'))
+      return socket as unknown as net.Socket
+    })
+
+    const client = new ConcertClient({
+      host: '192.0.2.10',
+      requestTimeoutMs: 5_000,
+      createConnection: createConnection as unknown as typeof net.createConnection,
+    })
+
+    const blockingQuery = client.getVolume(1).catch(() => undefined)
+    const started = Date.now()
+    let settledAt = 0
+    const pending = client.setSource('cd', 1, { timeoutMs: 1_000 })
+      .catch((error: unknown) => {
+        settledAt = Date.now()
+        return error
+      })
+    await advanceInSteps(2_000, 100)
+
+    expect(await pending).toBeInstanceOf(ConnectionError)
+    expect(settledAt - started).toBeLessThan(1_500)
+
+    await advanceInSteps(12_000, 500)
+    await blockingQuery
+  })
+
   it('does not accept a power-on confirmed by a standby status frame', async () => {
     jest.useFakeTimers()
     const createConnection = jest.fn(() => {

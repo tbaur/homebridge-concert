@@ -14,6 +14,11 @@ import { HOMEKIT_WRITE_BUDGET_MS } from '../../src/settings'
 import type { ConcertClient } from '../../src/api'
 import type ConcertPlatform from '../../src/platform'
 
+const HAPStatus = {
+  SERVICE_COMMUNICATION_FAILURE: -70402,
+  INVALID_VALUE_IN_REQUEST: -70410,
+} as const
+
 class FakeHapStatusError extends Error {
   constructor(readonly status: number) {
     super(`HapStatusError:${status}`)
@@ -63,6 +68,7 @@ function createPlatform(source = 'cd') {
     api: {
       hap: {
         HapStatusError: FakeHapStatusError,
+        HAPStatus,
       },
     },
     requestRefresh: jest.fn(),
